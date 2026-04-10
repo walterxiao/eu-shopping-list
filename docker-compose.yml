@@ -1,0 +1,16 @@
+services:
+  app:
+    build: .
+    image: rimowa-price-compare:local
+    container_name: rimowa-price-compare
+    ports:
+      - "3000:3000"
+    environment:
+      # Override to "0" to enable live Playwright scraping of rimowa.com.
+      SCRAPE_MOCK: "1"
+      CACHE_TTL_SECONDS: "21600"
+      CACHE_DB_PATH: "/app/data/cache.sqlite"
+    volumes:
+      # The SQLite cache persists across container restarts.
+      - ./data:/app/data
+    restart: unless-stopped
