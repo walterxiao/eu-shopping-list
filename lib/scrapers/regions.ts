@@ -28,9 +28,5 @@ export function getRegionMeta(region: Region): RegionMeta {
   return REGIONS[region];
 }
 
-/** Helper: compute the VAT-stripped ("net") price for a given region. */
-export function toNetPrice(priceRaw: number, region: Region): number {
-  const { vatRate } = REGIONS[region];
-  if (vatRate === 0) return priceRaw;
-  return Math.round((priceRaw / (1 + vatRate)) * 100) / 100;
-}
+/** Default VAT rate used when a /eu/... URL has no country-code override. */
+export const DEFAULT_EU_VAT_RATE = REGIONS.EU.vatRate;

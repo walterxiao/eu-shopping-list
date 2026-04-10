@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { getRegionMeta, toNetPrice } from "./regions";
+import { getRegionMeta } from "./regions";
 import type {
   FetchOptions,
   Region,
@@ -55,7 +55,6 @@ export function mockRegionScraper(region: Region): RegionScraper {
         region,
         currency: meta.currency,
         priceRaw: fixture.priceRaw,
-        priceNet: toNetPrice(fixture.priceRaw, region),
         url: fixture.url,
         imageUrl: fixture.imageUrl,
         scrapedAt: new Date().toISOString(),

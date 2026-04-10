@@ -113,7 +113,10 @@ function ItemCard({ item }: { item: ComparisonItem }) {
             <p className="text-base font-semibold">{eur(eu.priceRaw)}</p>
           </div>
           <div className={`rounded p-2 ${cheaperNetClass("EU")}`}>
-            <p className="text-xs text-neutral-600">Pre-tax</p>
+            <p className="text-xs text-neutral-600">
+              Pre-tax (minus{" "}
+              {Math.round(analysis.euVatRateApplied * 100)}% VAT)
+            </p>
             <p className="text-base font-semibold">
               {eur(analysis.euNetEur)}
             </p>

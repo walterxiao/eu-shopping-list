@@ -37,10 +37,37 @@ and you should see populated comparison cards.
 https://www.rimowa.com/eu/en/luggage/cabin/original-cabin/original-cabin-black/92552634.html
 https://www.rimowa.com/us-en/luggage/check-in/hybrid/hybrid-check-in-l-black/92573634.html
 https://www.rimowa.com/eu/en/luggage/check-in/essential/essential-check-in-l-silver/83273604.html
+https://www.rimowa.com/it/it/luggage/colour/silver/cabin/97353004.html
 ```
 
 You can paste URLs from either region — the app extracts the product code
 and looks up the other region automatically.
+
+## Supported URL shapes
+
+The URL parser accepts:
+
+- `www.rimowa.com/eu/<lang>/...` — pan-EU site (normalizes with a default 19% VAT)
+- `www.rimowa.com/us-en/...` or `.../us/...` — US site
+- `www.rimowa.com/<country>/<lang>/...` — any Eurozone country subdomain.
+  Supported country codes: **AT, BE, CY, DE, EE, ES, FI, FR, GR, HR, IE,
+  IT, LT, LU, LV, MT, NL, PT, SI, SK**. The "pre-tax" normalization uses
+  the correct national VAT rate for the URL's country (e.g. 22% for
+  `/it/it/`, 20% for `/fr/fr/`, 19% for `/de/de/`).
+
+Non-Eurozone sites are intentionally rejected with a clear reason:
+`/uk/`, `/gb/` (GBP), `/ch/` (CHF), `/jp/` (JPY), `/ca-en/` (CAD),
+`/au-en/` (AUD), etc. Adding support for those would require a multi-
+currency refactor that's out of scope for the MVP.
+
+### VAT / cache semantics
+
+Under the hood, the product cache stores exactly **one EU entry per
+product code** regardless of which country subdomain you pasted.
+Rimowa's EU country sites generally show the same EUR sticker across
+countries; the national VAT rate is applied per-user at analysis time,
+so comparing the same product via `/de/de/` and `/it/it/` will give
+different "pre-tax" numbers (Italian 22% strips more VAT).
 
 ## Scripts
 

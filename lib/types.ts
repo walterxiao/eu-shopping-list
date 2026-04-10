@@ -9,6 +9,12 @@ export interface CompareRequest {
 export interface ItemAnalysis {
   /** USD→EUR rate used for the conversion. */
   usdToEurRate: number;
+  /**
+   * The VAT rate used to strip tax from the EU raw price. Normally
+   * derived from the URL's country code (e.g. 0.22 for `/it/it/...`),
+   * falling back to 0.19 (DE) for pan-EU `/eu/...` URLs.
+   */
+  euVatRateApplied: number;
   /** EU raw price, already in EUR. */
   euRawEur: number;
   /** US raw price converted to EUR. */

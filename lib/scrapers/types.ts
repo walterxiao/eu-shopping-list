@@ -28,8 +28,6 @@ export interface RimowaProduct {
   currency: "EUR" | "USD";
   /** Price as displayed on the site (EU: incl. VAT; US: pre-sales-tax). */
   priceRaw: number;
-  /** VAT-stripped price (EU: raw / (1 + vatRate); US: unchanged). */
-  priceNet: number;
   url: string;
   imageUrl?: string;
   scrapedAt: string;

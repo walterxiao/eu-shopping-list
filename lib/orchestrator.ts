@@ -2,6 +2,7 @@ import { getCachedOrFetchProduct } from "./cache";
 import { getUsdToEurRate } from "./fx";
 import { parseRimowaUrl, RimowaUrlParseError } from "./rimowa-url";
 import { getRegionScrapers } from "./scrapers/registry";
+import { DEFAULT_EU_VAT_RATE } from "./scrapers/regions";
 import type {
   FetchOptions,
   Region,
@@ -65,11 +66,15 @@ function computeAnalysis(
   eu: RimowaProduct,
   us: RimowaProduct,
   usdToEurRate: number,
+  euVatRate: number,
 ): ItemAnalysis {
   const euRawEur = round2(eu.priceRaw);
   const usRawEur = round2(us.priceRaw * usdToEurRate);
-  const euNetEur = round2(eu.priceNet);
-  const usNetEur = round2(us.priceNet * usdToEurRate);
+
+  // EU raw price includes country-specific VAT; strip it out.
+  const euNetEur = round2(eu.priceRaw / (1 + euVatRate));
+  // US raw price is already pre-sales-tax on the site.
+  const usNetEur = round2(us.priceRaw * usdToEurRate);
 
   const cheaperRaw: Region = usRawEur <= euRawEur ? "US" : "EU";
   const rawHigh = Math.max(euRawEur, usRawEur);
@@ -87,6 +92,7 @@ function computeAnalysis(
 
   return {
     usdToEurRate,
+    euVatRateApplied: euVatRate,
     euRawEur,
     usRawEur,
     euNetEur,
@@ -100,24 +106,33 @@ function computeAnalysis(
   };
 }
 
+/**
+ * Intermediate shape produced by `compareOne` before the FX rate + VAT
+ * analysis are folded in at the end of `compare`.
+ */
+interface CompareOneResult {
+  base: Omit<ComparisonItem, "analysis">;
+  euVatRate: number;
+}
+
 async function compareOne(
   inputUrl: string,
   eu: RegionScraper,
   us: RegionScraper,
-): Promise<
-  Omit<ComparisonItem, "analysis"> & {
-    productCode?: string;
-    productName?: string;
-  }
-> {
+): Promise<CompareOneResult> {
   let productCode: string;
+  let euVatRate: number;
   try {
     const parsed = parseRimowaUrl(inputUrl);
     productCode = parsed.productCode;
+    euVatRate = parsed.euVatRate ?? DEFAULT_EU_VAT_RATE;
   } catch (err) {
     const reason =
       err instanceof RimowaUrlParseError ? err.message : String(err);
-    return { input: inputUrl, status: "error", reason };
+    return {
+      base: { input: inputUrl, status: "error", reason },
+      euVatRate: DEFAULT_EU_VAT_RATE,
+    };
   }
 
   const [euResult, usResult] = await Promise.allSettled([
@@ -144,17 +159,17 @@ async function compareOne(
 
   if (euResult.status === "rejected" && usResult.status === "rejected") {
     return {
-      input: inputUrl,
-      productCode,
-      status: "error",
-      reason: errors.join("; "),
+      base: {
+        input: inputUrl,
+        productCode,
+        status: "error",
+        reason: errors.join("; "),
+      },
+      euVatRate,
     };
   }
 
-  const base: Omit<ComparisonItem, "analysis"> & {
-    productCode?: string;
-    productName?: string;
-  } = {
+  const base: Omit<ComparisonItem, "analysis"> = {
     input: inputUrl,
     productCode,
     productName: euProduct?.productName ?? usProduct?.productName,
@@ -172,7 +187,7 @@ async function compareOne(
     base.reason = errors.join("; ");
   }
 
-  return base;
+  return { base, euVatRate };
 }
 
 /** Core entry point, shared by the API route and tests. */
@@ -183,7 +198,7 @@ export async function compare(
   // FX fetch runs in parallel with the scraper calls.
   const ratePromise = getUsdToEurRate();
 
-  const bases = await Promise.all(
+  const perUrl = await Promise.all(
     req.urls.map((url) => compareOne(url, eu, us)),
   );
 
@@ -199,9 +214,12 @@ export async function compare(
     );
   }
 
-  const items: ComparisonItem[] = bases.map((b) => {
-    if (b.status !== "ok" || !b.eu || !b.us) return b;
-    return { ...b, analysis: computeAnalysis(b.eu, b.us, fx.rate) };
+  const items: ComparisonItem[] = perUrl.map(({ base, euVatRate }) => {
+    if (base.status !== "ok" || !base.eu || !base.us) return base;
+    return {
+      ...base,
+      analysis: computeAnalysis(base.eu, base.us, fx.rate, euVatRate),
+    };
   });
 
   for (const item of items) {
