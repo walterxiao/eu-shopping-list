@@ -1,99 +1,331 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
+import { parseRimowaUrl, RimowaUrlParseError } from "@/lib/rimowa-url";
+import type { TrackedItem } from "@/lib/types";
 
 interface Props {
-  urls: string[];
-  onAdd: (url: string) => void;
-  onRemove: (index: number) => void;
-  onCompare: () => void;
-  comparing: boolean;
+  items: TrackedItem[];
+  onAdd: (url: string, productName: string, priceRaw: number) => Promise<void>;
+  onUpdate: (
+    id: string,
+    patch: { productName?: string; priceRaw?: number },
+  ) => Promise<void>;
+  onRemove: (id: string) => Promise<void>;
+  busy: boolean;
 }
 
-const PLACEHOLDER =
-  "https://www.rimowa.com/eu/en/luggage/cabin/original-cabin/.../92552634.html";
+type ParseResult =
+  | { kind: "empty" }
+  | { kind: "ok"; productCode: string; region: "EU" | "US"; country?: string; vatRate?: number }
+  | { kind: "error"; reason: string };
 
-export default function ShoppingListPanel({
-  urls,
+function parseForBadge(url: string): ParseResult {
+  if (!url.trim()) return { kind: "empty" };
+  try {
+    const p = parseRimowaUrl(url);
+    return {
+      kind: "ok",
+      productCode: p.productCode,
+      region: p.sourceRegion,
+      country: p.sourceCountry,
+      vatRate: p.euVatRate,
+    };
+  } catch (err) {
+    const reason =
+      err instanceof RimowaUrlParseError ? err.message : String(err);
+    return { kind: "error", reason };
+  }
+}
+
+function relativeTime(iso: string): string {
+  const delta = Date.now() - Date.parse(iso);
+  const seconds = Math.floor(delta / 1000);
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+function AddForm({
   onAdd,
-  onRemove,
-  onCompare,
-  comparing,
-}: Props) {
-  const [input, setInput] = useState("");
+  busy,
+}: {
+  onAdd: Props["onAdd"];
+  busy: boolean;
+}) {
+  const [url, setUrl] = useState("");
+  const [productName, setProductName] = useState("");
+  const [priceText, setPriceText] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [serverError, setServerError] = useState<string | null>(null);
 
-  function handleSubmit(e: FormEvent) {
+  const parseResult = useMemo(() => parseForBadge(url), [url]);
+
+  const currency =
+    parseResult.kind === "ok" && parseResult.region === "US" ? "USD" : "EUR";
+
+  const canSubmit =
+    parseResult.kind === "ok" &&
+    productName.trim().length > 0 &&
+    Number(priceText) > 0 &&
+    !busy &&
+    !submitting;
+
+  async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    // Support pasting multiple lines at once.
-    const lines = input
-      .split(/\r?\n/)
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
-    for (const line of lines) onAdd(line);
-    setInput("");
+    if (!canSubmit) return;
+    setSubmitting(true);
+    setServerError(null);
+    try {
+      await onAdd(url.trim(), productName.trim(), Number(priceText));
+      setUrl("");
+      setProductName("");
+      setPriceText("");
+    } catch (err) {
+      setServerError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
-    <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
-      <h2 className="mb-3 text-lg font-semibold">Rimowa product URLs</h2>
-
-      <form onSubmit={handleSubmit} className="mb-4 flex flex-col gap-2">
-        <textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder={PLACEHOLDER}
-          rows={3}
+    <form onSubmit={handleSubmit} className="space-y-3">
+      <div>
+        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral-500">
+          Rimowa product URL
+        </label>
+        <input
+          type="url"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          placeholder="https://www.rimowa.com/eu/en/.../92552634.html"
           className="w-full rounded border border-neutral-300 px-3 py-2 text-sm focus:border-neutral-500 focus:outline-none"
           aria-label="Rimowa product URL"
         />
-        <button
-          type="submit"
-          className="self-end rounded bg-neutral-900 px-3 py-2 text-sm font-medium text-white hover:bg-neutral-800 disabled:cursor-not-allowed disabled:bg-neutral-400"
-          disabled={input.trim().length === 0}
-        >
-          Add to list
-        </button>
-      </form>
-
-      {urls.length === 0 ? (
-        <p className="mb-4 text-sm text-neutral-500">
-          Paste a Rimowa product URL from either{" "}
-          <code className="rounded bg-neutral-100 px-1">rimowa.com/eu</code>{" "}
-          or{" "}
-          <code className="rounded bg-neutral-100 px-1">
-            rimowa.com/us-en
-          </code>
-          . We&apos;ll look up the matching product on the other site.
-        </p>
-      ) : (
-        <ul className="mb-4 divide-y divide-neutral-200">
-          {urls.map((url, i) => (
-            <li key={`${url}-${i}`} className="flex items-start gap-2 py-2">
-              <span
-                className="flex-1 break-all text-xs text-neutral-700"
-                title={url}
-              >
-                {url}
+        {parseResult.kind === "ok" && (
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+            <span className="rounded bg-emerald-100 px-2 py-0.5 font-medium text-emerald-800">
+              {parseResult.region}
+            </span>
+            {parseResult.country && (
+              <span className="rounded bg-neutral-100 px-2 py-0.5 uppercase text-neutral-700">
+                {parseResult.country}
               </span>
-              <button
-                onClick={() => onRemove(i)}
-                className="rounded px-2 text-sm text-neutral-500 hover:bg-neutral-100 hover:text-red-600"
-                aria-label={`Remove URL ${i + 1}`}
-              >
-                ×
-              </button>
-            </li>
-          ))}
-        </ul>
+            )}
+            {parseResult.vatRate !== undefined && (
+              <span className="rounded bg-neutral-100 px-2 py-0.5 text-neutral-700">
+                {Math.round(parseResult.vatRate * 100)}% VAT
+              </span>
+            )}
+            <span className="rounded bg-neutral-100 px-2 py-0.5 font-mono text-neutral-700">
+              #{parseResult.productCode}
+            </span>
+            <a
+              href={url.trim()}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="ml-auto text-blue-600 underline"
+            >
+              Open page to read price ↗
+            </a>
+          </div>
+        )}
+        {parseResult.kind === "error" && (
+          <p className="mt-1 text-xs text-red-600">{parseResult.reason}</p>
+        )}
+      </div>
+
+      <div>
+        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral-500">
+          Product name
+        </label>
+        <input
+          type="text"
+          value={productName}
+          onChange={(e) => setProductName(e.target.value)}
+          placeholder="Original Cabin — Black"
+          className="w-full rounded border border-neutral-300 px-3 py-2 text-sm focus:border-neutral-500 focus:outline-none"
+          aria-label="Product name"
+        />
+      </div>
+
+      <div>
+        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral-500">
+          Price ({currency})
+        </label>
+        <input
+          type="number"
+          value={priceText}
+          onChange={(e) => setPriceText(e.target.value)}
+          placeholder="0.00"
+          min={0}
+          step="0.01"
+          className="w-full rounded border border-neutral-300 px-3 py-2 text-sm focus:border-neutral-500 focus:outline-none"
+          aria-label="Price"
+        />
+      </div>
+
+      {serverError && (
+        <p className="text-xs text-red-600">{serverError}</p>
       )}
 
       <button
-        onClick={onCompare}
-        disabled={urls.length === 0 || comparing}
+        type="submit"
+        disabled={!canSubmit}
         className="w-full rounded bg-emerald-600 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-neutral-300"
       >
-        {comparing ? "Comparing…" : "Compare EU vs US"}
+        {submitting ? "Saving…" : "Save item"}
       </button>
+    </form>
+  );
+}
+
+function ItemRow({
+  item,
+  onUpdate,
+  onRemove,
+}: {
+  item: TrackedItem;
+  onUpdate: Props["onUpdate"];
+  onRemove: Props["onRemove"];
+}) {
+  const [editing, setEditing] = useState(false);
+  const [priceText, setPriceText] = useState(String(item.priceRaw));
+  const [busy, setBusy] = useState(false);
+
+  async function handleSave() {
+    const next = Number(priceText);
+    if (!Number.isFinite(next) || next <= 0) return;
+    setBusy(true);
+    try {
+      await onUpdate(item.id, { priceRaw: next });
+      setEditing(false);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!confirm(`Delete "${item.productName}"?`)) return;
+    setBusy(true);
+    try {
+      await onRemove(item.id);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <li className="flex flex-col gap-1 py-2">
+      <div className="flex items-center gap-2">
+        <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-neutral-700">
+          {item.region}
+          {item.sourceCountry ? ` · ${item.sourceCountry.toUpperCase()}` : ""}
+        </span>
+        <span className="flex-1 truncate text-sm font-medium">
+          {item.productName}
+        </span>
+        <button
+          onClick={handleDelete}
+          disabled={busy}
+          className="rounded px-2 text-sm text-neutral-400 hover:bg-neutral-100 hover:text-red-600 disabled:opacity-50"
+          aria-label={`Delete ${item.productName}`}
+        >
+          ×
+        </button>
+      </div>
+      <div className="flex items-center gap-2 text-sm">
+        {editing ? (
+          <>
+            <input
+              type="number"
+              value={priceText}
+              min={0}
+              step="0.01"
+              onChange={(e) => setPriceText(e.target.value)}
+              className="w-24 rounded border border-neutral-300 px-2 py-1 text-sm"
+              aria-label="New price"
+            />
+            <span className="text-xs text-neutral-500">{item.currency}</span>
+            <button
+              onClick={handleSave}
+              disabled={busy}
+              className="rounded bg-neutral-900 px-2 py-1 text-xs font-medium text-white hover:bg-neutral-800 disabled:opacity-50"
+            >
+              Save
+            </button>
+            <button
+              onClick={() => {
+                setEditing(false);
+                setPriceText(String(item.priceRaw));
+              }}
+              className="rounded px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-100"
+            >
+              Cancel
+            </button>
+          </>
+        ) : (
+          <>
+            <span className="font-semibold">
+              {item.priceRaw} {item.currency}
+            </span>
+            <button
+              onClick={() => setEditing(true)}
+              className="text-xs text-blue-600 underline"
+            >
+              Edit
+            </button>
+            <span className="ml-auto text-xs text-neutral-500">
+              {relativeTime(item.updatedAt)}
+            </span>
+          </>
+        )}
+      </div>
+      <a
+        href={item.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="truncate text-xs text-blue-600 underline"
+        title={item.url}
+      >
+        {item.url}
+      </a>
+    </li>
+  );
+}
+
+export default function ShoppingListPanel({
+  items,
+  onAdd,
+  onUpdate,
+  onRemove,
+  busy,
+}: Props) {
+  return (
+    <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
+      <h2 className="mb-3 text-lg font-semibold">Tracked items</h2>
+
+      <AddForm onAdd={onAdd} busy={busy} />
+
+      {items.length > 0 && (
+        <>
+          <hr className="my-4 border-neutral-200" />
+          <ul className="divide-y divide-neutral-200">
+            {items.map((item) => (
+              <ItemRow
+                key={item.id}
+                item={item}
+                onUpdate={onUpdate}
+                onRemove={onRemove}
+              />
+            ))}
+          </ul>
+        </>
+      )}
     </section>
   );
 }

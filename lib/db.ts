@@ -3,15 +3,20 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
 const SCHEMA_SQL = `
-  CREATE TABLE IF NOT EXISTS product_cache (
-    region       TEXT NOT NULL,
-    product_code TEXT NOT NULL,
-    result_json  TEXT NOT NULL,
-    fetched_at   INTEGER NOT NULL,
-    PRIMARY KEY (region, product_code)
+  CREATE TABLE IF NOT EXISTS tracked_items (
+    id             TEXT PRIMARY KEY,
+    url            TEXT NOT NULL,
+    product_code   TEXT NOT NULL,
+    region         TEXT NOT NULL,
+    source_country TEXT,
+    eu_vat_rate    REAL,
+    product_name   TEXT NOT NULL,
+    price_raw      REAL NOT NULL,
+    currency       TEXT NOT NULL,
+    updated_at     INTEGER NOT NULL
   );
-  CREATE INDEX IF NOT EXISTS idx_product_cache_fetched_at
-    ON product_cache(fetched_at);
+  CREATE INDEX IF NOT EXISTS idx_tracked_items_product_code
+    ON tracked_items(product_code);
 
   CREATE TABLE IF NOT EXISTS fx_cache (
     pair       TEXT PRIMARY KEY,
@@ -22,11 +27,11 @@ const SCHEMA_SQL = `
 
 let _db: DatabaseType | null = null;
 
-/** Lazily open (or reopen) the SQLite cache DB. */
+/** Lazily open (or reopen) the SQLite app DB. */
 export function getDb(): DatabaseType {
   if (_db) return _db;
 
-  const path = process.env.CACHE_DB_PATH || "data/cache.sqlite";
+  const path = process.env.CACHE_DB_PATH || "data/app.sqlite";
 
   if (path !== ":memory:") {
     mkdirSync(dirname(path), { recursive: true });

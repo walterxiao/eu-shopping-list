@@ -9,11 +9,11 @@ export function LegalDisclaimerBanner() {
   return (
     <div className="border-b border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900">
       <div className="mx-auto flex max-w-6xl items-start gap-3">
-        <span className="font-semibold">Educational demo.</span>
+        <span className="font-semibold">Manual entry.</span>
         <span className="flex-1">
-          Prices shown here may be inaccurate, delayed, or missing. You are
-          responsible for complying with each retailer&apos;s Terms of
-          Service. Not affiliated with Lidl, Carrefour, or Albert Heijn.
+          Prices are typed in by you after visiting rimowa.com yourself.
+          This app never fetches rimowa.com — it only does the currency
+          and VAT math. Not affiliated with Rimowa.
         </span>
         <button
           onClick={() => setDismissed(true)}
@@ -31,10 +31,9 @@ export function LegalDisclaimerFooter() {
   return (
     <footer className="mt-12 border-t border-neutral-200 bg-white px-4 py-4 text-xs text-neutral-600">
       <div className="mx-auto max-w-6xl">
-        Educational demo. Not affiliated with any retailer. No data is
-        redistributed — results are shown only to the user who initiated the
-        query. Single-user by design; do not use for commercial price
-        monitoring.
+        Prices are user-entered from your own manual visits to rimowa.com.
+        Customs duties, import VAT, warranty differences, and shipping
+        are not modeled. Not affiliated with any retailer.
       </div>
     </footer>
   );

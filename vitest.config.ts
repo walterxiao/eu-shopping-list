@@ -6,7 +6,6 @@ export default defineConfig({
     environment: "node",
     include: ["tests/**/*.test.ts"],
     env: {
-      SCRAPE_MOCK: "1",
       CACHE_DB_PATH: ":memory:",
     },
   },

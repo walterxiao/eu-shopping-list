@@ -2,8 +2,8 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
-  // Playwright and better-sqlite3 are server-only; exclude from client bundles.
-  serverExternalPackages: ["playwright", "better-sqlite3"],
+  // better-sqlite3 is a native module that must not be bundled.
+  serverExternalPackages: ["better-sqlite3"],
 };
 
 export default nextConfig;

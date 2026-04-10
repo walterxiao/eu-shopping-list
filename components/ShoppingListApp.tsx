@@ -1,7 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import type { CompareResponse } from "@/lib/types";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { groupAndAnalyze } from "@/lib/compute";
+import type {
+  FxResponse,
+  ListItemsResponse,
+  TrackedItem,
+} from "@/lib/types";
 import ShoppingListPanel from "./ShoppingListPanel";
 import ComparisonGrid from "./ComparisonGrid";
 import {
@@ -9,71 +14,106 @@ import {
   LegalDisclaimerFooter,
 } from "./LegalDisclaimer";
 
-const STORAGE_KEY = "rimowa-compare:urls";
+async function fetchItems(): Promise<TrackedItem[]> {
+  const res = await fetch("/api/items");
+  if (!res.ok) throw new Error(`GET /api/items → HTTP ${res.status}`);
+  const data = (await res.json()) as ListItemsResponse;
+  return data.items;
+}
 
-type Status = "idle" | "comparing" | "done" | "error";
-
-function loadFromStorage(): string[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((x): x is string => typeof x === "string");
-  } catch {
-    return [];
-  }
+async function fetchFx(): Promise<FxResponse> {
+  const res = await fetch("/api/fx");
+  if (!res.ok) throw new Error(`GET /api/fx → HTTP ${res.status}`);
+  return (await res.json()) as FxResponse;
 }
 
 export default function ShoppingListApp() {
-  const [urls, setUrls] = useState<string[]>([]);
-  const [status, setStatus] = useState<Status>("idle");
-  const [result, setResult] = useState<CompareResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [items, setItems] = useState<TrackedItem[]>([]);
+  const [fx, setFx] = useState<FxResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [fxError, setFxError] = useState<string | null>(null);
 
-  // Hydrate from localStorage on mount.
+  // Initial load.
   useEffect(() => {
-    setUrls(loadFromStorage());
+    let cancelled = false;
+    (async () => {
+      try {
+        const [loadedItems, loadedFx] = await Promise.all([
+          fetchItems(),
+          fetchFx().catch((err: Error) => {
+            if (!cancelled) setFxError(err.message);
+            return null;
+          }),
+        ]);
+        if (cancelled) return;
+        setItems(loadedItems);
+        if (loadedFx) setFx(loadedFx);
+      } catch (err) {
+        if (!cancelled) {
+          setFxError(err instanceof Error ? err.message : String(err));
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  // Persist on every change.
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(urls));
-  }, [urls]);
-
-  const onAdd = useCallback((url: string) => {
-    setUrls((prev) => (prev.includes(url) ? prev : [...prev, url]));
-  }, []);
-
-  const onRemove = useCallback((index: number) => {
-    setUrls((prev) => prev.filter((_, i) => i !== index));
-  }, []);
-
-  const onCompare = useCallback(async () => {
-    if (urls.length === 0) return;
-    setStatus("comparing");
-    setError(null);
-    setResult(null);
-    try {
-      const res = await fetch("/api/compare", {
+  const onAdd = useCallback(
+    async (url: string, productName: string, priceRaw: number) => {
+      const res = await fetch("/api/items", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ urls }),
+        body: JSON.stringify({ url, productName, priceRaw }),
       });
       if (!res.ok) {
-        const msg = await res.text();
-        throw new Error(`HTTP ${res.status}: ${msg}`);
+        const body = await res.json().catch(() => ({}));
+        throw new Error(
+          body.error ?? `POST /api/items → HTTP ${res.status}`,
+        );
       }
-      const data = (await res.json()) as CompareResponse;
-      setResult(data);
-      setStatus("done");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setStatus("error");
+      const { item } = (await res.json()) as { item: TrackedItem };
+      setItems((prev) => [item, ...prev]);
+    },
+    [],
+  );
+
+  const onUpdate = useCallback(
+    async (
+      id: string,
+      patch: { productName?: string; priceRaw?: number },
+    ) => {
+      const res = await fetch(`/api/items/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(
+          body.error ?? `PATCH /api/items/${id} → HTTP ${res.status}`,
+        );
+      }
+      const { item } = (await res.json()) as { item: TrackedItem };
+      setItems((prev) => prev.map((it) => (it.id === id ? item : it)));
+    },
+    [],
+  );
+
+  const onRemove = useCallback(async (id: string) => {
+    const res = await fetch(`/api/items/${id}`, { method: "DELETE" });
+    if (!res.ok && res.status !== 204) {
+      throw new Error(`DELETE /api/items/${id} → HTTP ${res.status}`);
     }
-  }, [urls]);
+    setItems((prev) => prev.filter((it) => it.id !== id));
+  }, []);
+
+  const comparison = useMemo(
+    () => groupAndAnalyze(items, fx?.rate ?? null),
+    [items, fx],
+  );
 
   return (
     <div className="min-h-screen bg-neutral-50">
@@ -82,27 +122,28 @@ export default function ShoppingListApp() {
         <div className="mx-auto max-w-6xl">
           <h1 className="text-xl font-bold">Rimowa — EU vs US price check</h1>
           <p className="text-sm text-neutral-600">
-            Paste product URLs from rimowa.com and see side-by-side prices
-            in both regions, with live FX and VAT normalization.
+            Track prices you&apos;ve seen on rimowa.com, compare US and EU
+            side-by-side with VAT normalization and live FX.
           </p>
         </div>
       </header>
       <main className="mx-auto grid max-w-6xl grid-cols-1 gap-4 p-4 lg:grid-cols-12">
-        <div className="lg:col-span-4">
+        <div className="lg:col-span-5">
           <ShoppingListPanel
-            urls={urls}
+            items={items}
             onAdd={onAdd}
+            onUpdate={onUpdate}
             onRemove={onRemove}
-            onCompare={onCompare}
-            comparing={status === "comparing"}
+            busy={loading}
           />
         </div>
-        <div className="lg:col-span-8">
+        <div className="lg:col-span-7">
           <ComparisonGrid
-            comparing={status === "comparing"}
-            pendingCount={urls.length}
-            result={result}
-            error={error}
+            loading={loading}
+            items={comparison}
+            fxRate={fx?.rate ?? null}
+            fxSource={fx?.source ?? null}
+            fxError={fxError}
           />
         </div>
       </main>

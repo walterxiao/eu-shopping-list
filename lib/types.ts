@@ -1,18 +1,59 @@
-import type { Region, RimowaProduct } from "./scrapers/types";
+/**
+ * Shared domain types for the manual price-tracker app.
+ *
+ * The user manually enters prices by visiting rimowa.com in a new tab
+ * and typing what they see. The backend stores those records; the
+ * frontend groups them by product code and computes the EU-vs-US
+ * comparison analysis (FX + VAT) as a pure client-side step.
+ */
 
-/** POST /api/compare request body. */
-export interface CompareRequest {
-  urls: string[];
+export type Region = "EU" | "US";
+export type Currency = "EUR" | "USD";
+
+/** A single stored item — one URL + one manually entered price. */
+export interface TrackedItem {
+  /** Server-generated UUID. */
+  id: string;
+  /** The original URL the user pasted (kept clickable in the UI). */
+  url: string;
+  /** 6–8 digit Rimowa product code, parsed from the URL. */
+  productCode: string;
+  /** Internal bucket (`"EU"` or `"US"`). */
+  region: Region;
+  /** Country code from URLs like `/it/it/`; undefined for `/eu/...`. */
+  sourceCountry?: string;
+  /** VAT rate from the country code (EU only); undefined for US. */
+  euVatRate?: number;
+  /** User-entered display name. */
+  productName: string;
+  /** User-entered price in the region's native currency. */
+  priceRaw: number;
+  currency: Currency;
+  /** ISO timestamp of the most recent manual update. */
+  updatedAt: string;
 }
 
-/** Computed analysis for a single product (only set when both regions hit). */
+/** Request body for POST /api/items. */
+export interface NewItemInput {
+  url: string;
+  productName: string;
+  priceRaw: number;
+}
+
+/** Request body for PATCH /api/items/:id — both fields optional. */
+export interface UpdateItemInput {
+  productName?: string;
+  priceRaw?: number;
+}
+
+/** Computed analysis for a paired (EU + US) product. */
 export interface ItemAnalysis {
   /** USD→EUR rate used for the conversion. */
   usdToEurRate: number;
   /**
    * The VAT rate used to strip tax from the EU raw price. Normally
-   * derived from the URL's country code (e.g. 0.22 for `/it/it/...`),
-   * falling back to 0.19 (DE) for pan-EU `/eu/...` URLs.
+   * derived from the EU item's `euVatRate` (e.g. 0.22 for `/it/it/...`),
+   * falling back to 0.19 (DE) for pan-EU `/eu/...` items.
    */
   euVatRateApplied: number;
   /** EU raw price, already in EUR. */
@@ -21,13 +62,11 @@ export interface ItemAnalysis {
   usRawEur: number;
   /** EU price with VAT removed, in EUR. */
   euNetEur: number;
-  /** US price (already net) in EUR. */
+  /** US price (already pre-sales-tax) in EUR. */
   usNetEur: number;
-  /** Which region is cheaper when comparing raw (what-you-actually-pay) prices. */
+  /** Which region is cheaper on raw (what-you-actually-pay) prices. */
   cheaperRaw: Region;
-  /** Absolute savings in EUR when buying from `cheaperRaw`. */
   savingsRawEur: number;
-  /** Percent savings relative to the more expensive raw price. */
   savingsRawPercent: number;
   /** Which region is cheaper after VAT/tax normalization. */
   cheaperNormalized: Region;
@@ -35,31 +74,31 @@ export interface ItemAnalysis {
   savingsNormalizedPercent: number;
 }
 
-/** Per-URL result in the comparison response. */
+/**
+ * One row in the comparison grid. Produced by `lib/compute.ts` from
+ * the full list of `TrackedItem[]` and the current FX rate.
+ *
+ * - `ok` → both regions populated, analysis set
+ * - `single_eu` → only the EU side exists
+ * - `single_us` → only the US side exists
+ */
 export interface ComparisonItem {
-  /** The URL the user pasted. */
-  input: string;
-  productCode?: string;
-  productName?: string;
-  eu?: RimowaProduct;
-  us?: RimowaProduct;
-  /**
-   * - `ok`: both regions returned a product, analysis is populated
-   * - `partial`: exactly one region returned a product
-   * - `not_found`: neither region returned a product
-   * - `error`: the URL could not be parsed or a scraper threw
-   */
-  status: "ok" | "partial" | "not_found" | "error";
-  reason?: string;
+  productCode: string;
+  productName: string;
+  eu?: TrackedItem;
+  us?: TrackedItem;
   analysis?: ItemAnalysis;
+  status: "ok" | "single_eu" | "single_us";
 }
 
-/** POST /api/compare response body. */
-export interface CompareResponse {
-  items: ComparisonItem[];
-  /** Rate used for every item's analysis (undefined if FX fetch failed). */
-  usdToEurRate?: number;
-  generatedAt: string;
-  /** Top-level notes surfaced in the UI (FX fallback, scraper failures). */
-  warnings: string[];
+/** Response body for GET /api/items. */
+export interface ListItemsResponse {
+  items: TrackedItem[];
+}
+
+/** Response body for GET /api/fx. */
+export interface FxResponse {
+  rate: number;
+  source: "cache" | "live" | "stale" | "fallback";
+  fetchedAt: string;
 }

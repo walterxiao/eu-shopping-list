@@ -1,4 +1,4 @@
-import type { Region } from "./scrapers/types";
+import type { Region } from "./types";
 
 export interface ParsedRimowaUrl {
   /** 6–8 digit product code extracted from the URL path. */
