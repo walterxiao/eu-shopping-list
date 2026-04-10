@@ -117,6 +117,38 @@ describe("compare orchestrator (mock mode)", () => {
     expect(res.items[1].status).toBe("ok");
   });
 
+  it("ignores stale null cache entries in mock mode", async () => {
+    // Regression: before the mock-mode bypass, a null cached entry
+    // from before a fixture was added would shadow the new fixture
+    // until the 10-minute miss TTL expired. This test pre-poisons the
+    // cache with nulls for a known-good product code, then verifies
+    // the orchestrator still returns the fixture.
+    stubFx(0.92);
+
+    const { getDb } = await import("@/lib/db");
+    const db = getDb();
+    const now = Math.floor(Date.now() / 1000);
+    for (const region of ["EU", "US"]) {
+      db.prepare(
+        `INSERT INTO product_cache(region, product_code, result_json, fetched_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(region, product_code) DO UPDATE SET
+           result_json = excluded.result_json,
+           fetched_at  = excluded.fetched_at`,
+      ).run(region, "97353004", JSON.stringify(null), now);
+    }
+
+    const res = await compare({
+      urls: [
+        "https://www.rimowa.com/it/it/luggage/cabin/97353004.html",
+      ],
+    });
+    // Despite the pre-poisoned null, the fixture should still come back.
+    expect(res.items[0].status).toBe("ok");
+    expect(res.items[0].eu?.productName).toBe("Classic Cabin — Silver");
+    expect(res.items[0].us?.productName).toBe("Classic Cabin — Silver");
+  });
+
   it("handles multiple URLs in parallel", async () => {
     stubFx(0.9);
     const res = await compare({

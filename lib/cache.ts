@@ -21,12 +21,23 @@ function ttlFor(value: RimowaProduct | null): number {
  * otherwise call `fetcher` and persist its result. A `null` result means
  * "product not found in this region" and is cached with a short TTL so a
  * transient 404 doesn't stick for hours.
+ *
+ * In mock mode (`SCRAPE_MOCK=1`) the cache is bypassed entirely — the
+ * fetcher is a sub-millisecond fixture file read, so caching adds zero
+ * value and creates sharp edges when fixtures are edited or added
+ * (previously-cached null entries would shadow newly-added fixtures
+ * until the TTL expires). Bypassing the cache keeps mock-mode
+ * development instantly reactive to fixture changes.
  */
 export async function getCachedOrFetchProduct(
   region: Region,
   productCode: string,
   fetcher: () => Promise<RimowaProduct | null>,
 ): Promise<RimowaProduct | null> {
+  if (process.env.SCRAPE_MOCK === "1") {
+    return fetcher();
+  }
+
   const db = getDb();
   const now = Math.floor(Date.now() / 1000);
 
