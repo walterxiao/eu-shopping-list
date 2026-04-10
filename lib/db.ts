@@ -18,8 +18,6 @@ const SCHEMA_SQL = `
   );
   CREATE INDEX IF NOT EXISTS idx_tracked_items_product_code
     ON tracked_items(product_code);
-  CREATE INDEX IF NOT EXISTS idx_tracked_items_host_code
-    ON tracked_items(host, product_code);
 
   CREATE TABLE IF NOT EXISTS fx_cache (
     pair       TEXT PRIMARY KEY,
@@ -30,8 +28,15 @@ const SCHEMA_SQL = `
 
 /**
  * Idempotent migration for databases created before the `host` column
- * existed. Adds the column if missing and backfills it from the URL
- * field for existing rows.
+ * existed. Adds the column if missing, creates the host-aware index
+ * on top of it, and backfills `host` from the `url` field for any
+ * rows that were inserted before the column existed.
+ *
+ * NB: the host-aware index lives here (not in SCHEMA_SQL) because on
+ * an upgrade path, `SCHEMA_SQL` runs before we've had a chance to
+ * ALTER the table — creating an index that references a not-yet-
+ * existing column would throw "no such column: host" and take down
+ * the first request after the upgrade.
  */
 function ensureHostColumn(db: DatabaseType): void {
   const columns = db
@@ -41,6 +46,11 @@ function ensureHostColumn(db: DatabaseType): void {
   if (!hasHost) {
     db.exec("ALTER TABLE tracked_items ADD COLUMN host TEXT");
   }
+
+  // Safe to create now that the column definitely exists.
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_tracked_items_host_code ON tracked_items(host, product_code)",
+  );
 
   const nullRows = db
     .prepare<[], { id: string; url: string }>(
@@ -59,7 +69,8 @@ function ensureHostColumn(db: DatabaseType): void {
           const host = new URL(row.url).hostname.toLowerCase();
           update.run(host, row.id);
         } catch {
-          // Unparseable URL — skip, leave host NULL.
+          // Unparseable URL — skip, leave host NULL. `rowToItem`
+          // falls back to re-extracting the host at read time.
         }
       }
     },

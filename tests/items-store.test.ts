@@ -1,4 +1,8 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { unlinkSync } from "node:fs";
+import Database from "better-sqlite3";
 import {
   createItem,
   deleteItem,
@@ -163,5 +167,123 @@ describe("items-store", () => {
     expect(getItem(created.id)).toBeNull();
     // Second delete is a no-op.
     expect(deleteItem(created.id)).toBe(false);
+  });
+});
+
+// ------------------------------------------------------------------
+// Regression guard for the v4 → v5 upgrade path
+// ------------------------------------------------------------------
+
+describe("items-store — v4 → v5 upgrade migration", () => {
+  // These tests point at a real tempfile instead of the :memory:
+  // default (set by vitest.config.ts) because the bug they guard
+  // against only reproduces when there's an existing on-disk
+  // database from a previous schema version. An in-memory DB is
+  // always created from scratch.
+  const tmpPath = join(tmpdir(), `items-store-upgrade-${process.pid}.sqlite`);
+
+  function cleanupTmp(): void {
+    for (const suffix of ["", "-shm", "-wal"]) {
+      try {
+        unlinkSync(`${tmpPath}${suffix}`);
+      } catch {
+        /* ignore missing */
+      }
+    }
+  }
+
+  beforeEach(() => {
+    // Make sure we're not reusing a previous in-memory singleton.
+    resetDbForTest();
+    cleanupTmp();
+
+    // Create a v4-shape database: tracked_items with NO host column
+    // and NO host-aware index. Seed one legacy row so we can assert
+    // the backfill runs.
+    const seed = new Database(tmpPath);
+    seed.pragma("journal_mode = WAL");
+    seed.exec(`
+      CREATE TABLE tracked_items (
+        id             TEXT PRIMARY KEY,
+        url            TEXT NOT NULL,
+        product_code   TEXT NOT NULL,
+        region         TEXT NOT NULL,
+        source_country TEXT,
+        eu_vat_rate    REAL,
+        product_name   TEXT NOT NULL,
+        price_raw      REAL NOT NULL,
+        currency       TEXT NOT NULL,
+        updated_at     INTEGER NOT NULL
+      );
+      CREATE INDEX idx_tracked_items_product_code
+        ON tracked_items(product_code);
+      CREATE TABLE fx_cache (
+        pair       TEXT PRIMARY KEY,
+        rate       REAL NOT NULL,
+        fetched_at INTEGER NOT NULL
+      );
+    `);
+    seed
+      .prepare(
+        `INSERT INTO tracked_items(
+          id, url, product_code, region, source_country, eu_vat_rate,
+          product_name, price_raw, currency, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        "legacy-1",
+        "https://www.rimowa.com/eu/en/old/92552634.html",
+        "92552634",
+        "EU",
+        null,
+        null,
+        "Legacy Rimowa Item",
+        1000,
+        "EUR",
+        Math.floor(Date.now() / 1000),
+      );
+    seed.close();
+
+    // Point the items-store at the tempfile for this describe block.
+    vi.stubEnv("CACHE_DB_PATH", tmpPath);
+  });
+
+  afterEach(() => {
+    resetDbForTest();
+    vi.unstubAllEnvs();
+    cleanupTmp();
+  });
+
+  it("opens a v4-shape DB without throwing (migration adds host column + index)", () => {
+    // BUG REPRODUCED BY THIS TEST:
+    //
+    //   SqliteError: no such column: host
+    //     at getDb (lib/db.ts)
+    //
+    // Root cause: SCHEMA_SQL used to contain
+    //   CREATE INDEX ... ON tracked_items(host, product_code)
+    // which runs BEFORE ensureHostColumn() has had a chance to
+    // ALTER the column in on an upgraded v4 database. The fix
+    // moves the host-aware index creation inside ensureHostColumn,
+    // after the ALTER TABLE.
+    const item = createItem({
+      url: "https://www.rimowa.com/it/it/luggage/97353004.html",
+      productName: "Classic Cabin Silver",
+      priceRaw: 1275,
+    });
+    expect(item.host).toBe("www.rimowa.com");
+    expect(item.productCode).toBe("97353004");
+    expect(item.region).toBe("EU");
+    expect(item.sourceCountry).toBe("it");
+  });
+
+  it("backfills host on legacy rows that were inserted pre-v5", () => {
+    // Triggering listItems causes getDb() which runs the migration.
+    const all = listItems();
+    const legacy = all.find((i) => i.id === "legacy-1");
+    expect(legacy).toBeDefined();
+    // The backfill should derive host from the url column.
+    expect(legacy!.host).toBe("www.rimowa.com");
+    expect(legacy!.productName).toBe("Legacy Rimowa Item");
   });
 });
