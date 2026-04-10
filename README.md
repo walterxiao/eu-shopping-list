@@ -1,139 +1,201 @@
 # rimowa-price-compare
 
-> Repo name is historical (`eu-shopping-list`). The app compares **Rimowa
-> luggage prices between rimowa.com EU and rimowa.com US** — not groceries.
+> Repo is still named `eu-shopping-list` for historical reasons. The app
+> compares **Rimowa luggage prices between the EU and US rimowa.com
+> sites** using manually-entered prices and automatic VAT + FX math.
 
-Paste a list of Rimowa product URLs from either regional site and the app
-will show a side-by-side comparison with:
+A small full-stack app for travelers who want to decide whether to buy
+a Rimowa suitcase in the EU or the US. The app **never fetches
+rimowa.com itself** — instead, you visit the site yourself, read the
+current price, paste the URL into the app along with the price you saw,
+and the app handles:
 
-- Raw prices — what you actually pay on each site (EU includes 19% VAT;
-  US is pre-sales-tax)
-- Tax-normalized prices — both sides stripped of VAT for an
-  apples-to-apples comparison
-- Live USD→EUR conversion from
-  [exchangerate.host](https://exchangerate.host), cached for 24 hours
-- A per-product "cheaper by X" summary on both the raw and normalized axes
-
-By default the app runs in **mock mode** using bundled fixture data, so
-you can demo the full UX without hitting rimowa.com. Live scraping is
-opt-in.
+- Persisting your tracked items in SQLite so they survive restarts
+- Pairing EU and US items automatically by product code
+- Stripping the correct per-country VAT from EU prices (22% for Italy,
+  20% for France, 19% for Germany, …)
+- Fetching and caching the USD→EUR rate from exchangerate.host (24 h)
+- Computing both "raw" (what-you-actually-pay) and "pre-tax"
+  (apples-to-apples) comparisons
+- Highlighting the cheaper region on each axis
 
 ## Quick start (native)
 
 ```bash
 nvm use                    # Node 22
 npm install
-cp .env.example .env       # SCRAPE_MOCK=1 by default
+cp .env.example .env
 npm run dev
 # open http://localhost:3000
 ```
 
-Paste one or more of the sample URLs below, click **Compare EU vs US**,
-and you should see populated comparison cards.
+## Quick start (Docker)
 
-## Sample Rimowa URLs (match the mock fixtures)
-
-```
-https://www.rimowa.com/eu/en/luggage/cabin/original-cabin/original-cabin-black/92552634.html
-https://www.rimowa.com/us-en/luggage/check-in/hybrid/hybrid-check-in-l-black/92573634.html
-https://www.rimowa.com/eu/en/luggage/check-in/essential/essential-check-in-l-silver/83273604.html
-https://www.rimowa.com/it/it/luggage/colour/silver/cabin/97353004.html
+```bash
+docker compose up --build
+# open http://localhost:3000
 ```
 
-You can paste URLs from either region — the app extracts the product code
-and looks up the other region automatically.
+The `./data` directory on your host is mounted into the container, so
+`data/app.sqlite` (with your tracked items + FX cache) persists across
+container restarts.
+
+## Usage walkthrough
+
+1. **Open rimowa.com in a new tab** — navigate to a product you're
+   thinking of buying, for example:
+   <https://www.rimowa.com/it/it/luggage/colour/silver/cabin/97353004.html>
+
+2. **Copy the URL** and paste it into the app's URL field. Metadata
+   badges appear immediately showing the extracted region, country,
+   VAT rate, and product code. The app also shows a small
+   "Open page to read price ↗" link that re-opens the page in a new
+   tab in case you closed it.
+
+3. **Read the price on rimowa.com** (the real price you'd actually
+   pay, including VAT for EU sites).
+
+4. **Back in the app**, type the product name and price, then click
+   **Save item**. The item appears in the list on the left, marked
+   with an `EU · IT` badge.
+
+5. **Repeat for the US side** — visit
+   <https://www.rimowa.com/us-en/.../97353004.html>, read the USD
+   price, paste that URL into the app, type the same product name and
+   the US price, click Save.
+
+6. **The comparison card populates automatically** on the right
+   because both regions now have a record for the same product code.
+   It shows:
+   - EU raw (with country VAT) and pre-tax (with the country VAT
+     stripped out)
+   - US raw in USD with the EUR conversion shown alongside
+   - Which region is cheaper on the raw axis and by how much
+   - Which region is cheaper on the normalized axis and by how much
+
+7. **When you want to check for price changes**, click the stored URL
+   in the item list (opens in a new tab), read the current price on
+   rimowa.com, come back to the app, click **Edit** on the row, type
+   the new price, click **Save**. The comparison card updates
+   instantly.
 
 ## Supported URL shapes
 
 The URL parser accepts:
 
-- `www.rimowa.com/eu/<lang>/...` — pan-EU site (normalizes with a default 19% VAT)
+- `www.rimowa.com/eu/<lang>/...` — pan-EU site (normalizes with a
+  default 19% VAT)
 - `www.rimowa.com/us-en/...` or `.../us/...` — US site
-- `www.rimowa.com/<country>/<lang>/...` — any Eurozone country subdomain.
-  Supported country codes: **AT, BE, CY, DE, EE, ES, FI, FR, GR, HR, IE,
-  IT, LT, LU, LV, MT, NL, PT, SI, SK**. The "pre-tax" normalization uses
-  the correct national VAT rate for the URL's country (e.g. 22% for
-  `/it/it/`, 20% for `/fr/fr/`, 19% for `/de/de/`).
+- `www.rimowa.com/<country>/<lang>/...` — any Eurozone country
+  subdomain. Supported country codes: **AT, BE, CY, DE, EE, ES, FI,
+  FR, GR, HR, IE, IT, LT, LU, LV, MT, NL, PT, SI, SK**. The "pre-tax"
+  normalization uses the correct national VAT rate (22% for IT, 20%
+  for FR, 19% for DE, …).
 
-Non-Eurozone sites are intentionally rejected with a clear reason:
-`/uk/`, `/gb/` (GBP), `/ch/` (CHF), `/jp/` (JPY), `/ca-en/` (CAD),
-`/au-en/` (AUD), etc. Adding support for those would require a multi-
-currency refactor that's out of scope for the MVP.
+Non-Eurozone sites are intentionally rejected with a clear reason
+(`/uk/`, `/gb/` → GBP; `/ch/` → CHF; `/jp/` → JPY; `/ca-en/` → CAD;
+etc.).
 
-### VAT / cache semantics
+## Architecture at a glance
 
-Under the hood, the product cache stores exactly **one EU entry per
-product code** regardless of which country subdomain you pasted.
-Rimowa's EU country sites generally show the same EUR sticker across
-countries; the national VAT rate is applied per-user at analysis time,
-so comparing the same product via `/de/de/` and `/it/it/` will give
-different "pre-tax" numbers (Italian 22% strips more VAT).
+```
+Browser                         Next.js backend
+───────                         ───────────────
+ShoppingListApp  ◀─── HTTP ───▶ /api/items  (GET / POST)
+ ├─ items list                  /api/items/[id]  (PATCH / DELETE)
+ ├─ fxRate                      /api/fx  (GET)
+ └─ groupAndAnalyze()           │
+    (pure function)             ▼
+                             lib/items-store.ts   (CRUD)
+                             lib/fx.ts            (24h FX cache)
+                             lib/db.ts            (better-sqlite3)
+                                   │
+                                   ▼
+                             data/app.sqlite
+```
+
+The backend's only jobs are:
+
+1. Persist user-entered items in the `tracked_items` table
+2. Proxy the FX rate from `exchangerate.host` and cache it for 24 h
+   in the `fx_cache` table
+
+It never fetches rimowa.com. The comparison analysis (grouping by
+product code, VAT normalization, FX conversion, winner selection)
+runs client-side as a pure function on the items + rate the server
+returned.
 
 ## Scripts
 
-| Command             | What it does                              |
-| ------------------- | ----------------------------------------- |
-| `npm run dev`       | Next.js dev server                        |
-| `npm run build`     | Production build                          |
-| `npm start`         | Run the production build                  |
-| `npm test`          | Vitest (always runs with `SCRAPE_MOCK=1`) |
-| `npm run typecheck` | `tsc --noEmit`                            |
-| `npm run lint`      | ESLint via `next lint`                    |
+| Command             | What it does                             |
+| ------------------- | ---------------------------------------- |
+| `npm run dev`       | Next.js dev server                       |
+| `npm run build`     | Production build (Next.js standalone)    |
+| `npm run start`     | Run the production build                 |
+| `npm test`          | Vitest — 53 tests                        |
+| `npm run typecheck` | `tsc --noEmit`                           |
+| `npm run lint`      | ESLint via `next lint`                   |
+| `npm run docker:up` | Build and run via docker compose         |
 
-## Live scraping (opt-in)
+## Testing
+
+53 tests across four files:
+
+- `tests/rimowa-url.test.ts` (26) — URL parsing, Eurozone country
+  code recognition, VAT rate lookup, explicit currency rejects
+- `tests/fx.test.ts` (5) — FX fetcher with mocked HTTP: cache hits,
+  stale fallback, hardcoded fallback, malformed payload
+- `tests/items-store.test.ts` (12) — in-memory CRUD: EU metadata
+  derivation, IT per-country VAT, US currency, malformed URL
+  rejection, GBP rejection, name + price validation, newest-first
+  ordering with ROWID tiebreak, update bumps updatedAt, delete
+  returns true/false
+- `tests/compute.test.ts` (10) — pure grouping function: empty
+  input, single-side cards, paired analysis, per-country VAT
+  differences (DE 19% vs IT 22% on identical raw prices),
+  multi-product grouping, same-code dedup, null FX rate
+
+## Data persistence
+
+Tracked items live in `data/app.sqlite` on the host (mounted into the
+container for Docker users). To wipe everything and start fresh:
 
 ```bash
-npx playwright install chromium
-echo "SCRAPE_MOCK=0" >> .env
-npm run dev
+rm data/app.sqlite*
 ```
 
-In live mode the app launches headless chromium and scrapes
-`rimowa.com/eu/en` and `rimowa.com/us-en` in parallel for each product
-code. First run is slow (10–30 s) while chromium warms up and the FX rate
-is fetched. Subsequent runs hit the SQLite cache (product data cached 6 h,
-FX rate cached 24 h). If either region's page can't be parsed (anti-bot
-challenge, DOM change, network timeout) the affected product is flagged
-`error` or `partial` in the UI and the other item continues unaffected.
+The schema is created automatically on startup by `lib/db.ts`.
 
-## How it works
+## Deployment to AWS (future)
 
-1. **Parse** — `lib/rimowa-url.ts` extracts the 6–8 digit product code
-   and source region from any rimowa.com URL.
-2. **Fetch both regions in parallel** — `lib/orchestrator.ts` runs the EU
-   and US scrapers simultaneously through `getCachedOrFetchProduct`.
-3. **Fetch FX** — in parallel with the product fetches,
-   `lib/fx.ts` pulls the USD→EUR rate from exchangerate.host (cached 24 h
-   in SQLite; falls back to the last known good value on error).
-4. **Compute** — for each product with both regions populated, compute
-   raw EUR prices, net (pre-VAT / pre-sales-tax) prices, which side is
-   cheaper, and by how much.
-5. **Render** — `components/ComparisonGrid.tsx` shows one card per
-   product with both regions side-by-side and the raw + normalized
-   winners highlighted.
+The same Docker image is deployable to AWS with minimal changes:
 
-The scraper layer is an adapter pattern: `RegionScraper` has a single
-method `fetchByCode(productCode, opts)`. The mock and the two live
-adapters all implement the same interface, which makes registering a new
-region (e.g. UK post-Brexit) a one-line change in `lib/scrapers/registry.ts`.
+- **App Runner** (simplest) — push to ECR, point App Runner at the
+  image. Note: App Runner doesn't support persistent volumes, so
+  `data/app.sqlite` becomes ephemeral (users lose their items on
+  redeploy). For personal use this may be acceptable.
+- **ECS Fargate + EFS** — mount EFS at `/app/data` for true
+  persistence across tasks.
+- **EC2 + docker compose** — simplest persistent option; point the
+  host volume at an EBS disk.
+- **Long-term path** — migrate `items-store.ts` from SQLite to
+  DynamoDB. Only `items-store.ts` and `fx.ts` need to change; the
+  rest of the app is decoupled from storage.
 
-## Legal & Ethical Notice
+Authentication is still out of scope. Anyone who can reach the server
+can see and edit all items. For multi-user deployment you'd add
+Auth.js with the SQLite adapter (see the v2 plan in the archive for
+the design sketch).
 
-**This project is an educational demo.** It fetches publicly available
-product pricing from rimowa.com for demonstration purposes only.
+## Legal & ethical notice
+
+This project is an **educational demo** that processes user-entered
+prices. It does not scrape, crawl, or automate access to rimowa.com.
 
 - Not affiliated with Rimowa or LVMH.
-- Prices may be inaccurate, delayed, or missing. Tax/duty/shipping are
-  not included in any comparison.
-- No data is redistributed; results are shown only to the user who
-  initiated the query.
-- Default `SCRAPE_MOCK=1` so a fresh clone never accidentally hits
-  rimowa.com.
-- You are responsible for complying with rimowa.com's Terms of Service.
-  Do not use this tool for commercial price monitoring.
-- If you deploy this publicly, you assume full responsibility for ToS
-  and GDPR compliance.
-- **Cross-border purchasing has real-world consequences** — customs
-  duties, import VAT, warranty coverage, and return logistics all
-  differ. This app does not account for any of them. Consult a
-  professional before making a purchase decision.
+- Prices are whatever you typed in; the app does not verify them.
+- Customs duties, import VAT, warranty differences, and shipping
+  costs are **not** modeled. A lower sticker price on one side does
+  not mean lower total cost of ownership.
+- Cross-border purchases have real consequences — consult a
+  professional before acting on the numbers this app shows.

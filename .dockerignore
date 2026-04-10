@@ -12,5 +12,3 @@ README.md
 coverage
 .vscode
 .idea
-# NB: fixtures/ is intentionally NOT ignored — the mock scraper reads
-# these at runtime, and SCRAPE_MOCK=1 is the Docker default.

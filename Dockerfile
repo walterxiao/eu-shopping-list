@@ -1,10 +1,15 @@
 # syntax=docker/dockerfile:1.7
 
 # ---- deps ----
-# Use the official Playwright image: Ubuntu 22.04 with chromium and all
-# system deps preinstalled. Build tools are present for better-sqlite3.
-FROM mcr.microsoft.com/playwright:v1.48.0-jammy AS deps
+# node:22-bookworm-slim is ~240 MB and has build tools readily
+# available for better-sqlite3's native binding. Alpine would need
+# extra setup for musl compatibility.
+FROM node:22-bookworm-slim AS deps
 WORKDIR /app
+# better-sqlite3 needs python3, make, and g++ to build its native binding
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 make g++ \
+    && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json ./
 RUN npm ci
 
@@ -16,26 +21,24 @@ COPY . .
 RUN npm run build
 
 # ---- runtime ----
-FROM mcr.microsoft.com/playwright:v1.48.0-jammy AS runtime
+FROM node:22-bookworm-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
-    SCRAPE_MOCK=1 \
-    CACHE_DB_PATH=/app/data/cache.sqlite \
+    CACHE_DB_PATH=/app/data/app.sqlite \
     HOSTNAME=0.0.0.0 \
     PORT=3000
 
-# Create the data dir and hand everything to the non-root pwuser that
-# ships with the Playwright image.
-RUN mkdir -p /app/data && chown -R pwuser:pwuser /app
-USER pwuser
+# Create the data dir and hand everything to the non-root node user
+# that ships with the base image.
+RUN mkdir -p /app/data && chown -R node:node /app
+USER node
 
 # Next.js standalone output is self-contained: it already includes a
-# traced node_modules (with better-sqlite3's native binding) and the
-# fixtures/ directory the mock scraper reads at runtime.
-COPY --from=build --chown=pwuser:pwuser /app/.next/standalone ./
-COPY --from=build --chown=pwuser:pwuser /app/.next/static ./.next/static
-COPY --from=build --chown=pwuser:pwuser /app/public ./public
+# traced node_modules snapshot with better-sqlite3's native binding.
+COPY --from=build --chown=node:node /app/.next/standalone ./
+COPY --from=build --chown=node:node /app/.next/static ./.next/static
+COPY --from=build --chown=node:node /app/public ./public
 
 EXPOSE 3000
 CMD ["node", "server.js"]

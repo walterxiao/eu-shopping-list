@@ -6,11 +6,10 @@ services:
     ports:
       - "3000:3000"
     environment:
-      # Override to "0" to enable live Playwright scraping of rimowa.com.
-      SCRAPE_MOCK: "1"
-      CACHE_TTL_SECONDS: "21600"
-      CACHE_DB_PATH: "/app/data/cache.sqlite"
+      # FX rate cache TTL (default 24h).
+      CACHE_TTL_SECONDS: "86400"
+      CACHE_DB_PATH: "/app/data/app.sqlite"
     volumes:
-      # The SQLite cache persists across container restarts.
+      # Tracked items + FX cache persist across container restarts.
       - ./data:/app/data
     restart: unless-stopped
