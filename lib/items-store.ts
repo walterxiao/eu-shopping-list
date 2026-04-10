@@ -17,7 +17,7 @@ interface Row {
   product_code: string;
   region: "EU" | "US";
   source_country: string | null;
-  eu_vat_rate: number | null;
+  eu_refund_rate: number | null;
   product_name: string;
   price_raw: number;
   currency: "EUR" | "USD";
@@ -37,14 +37,12 @@ function rowToItem(row: Row): TrackedItem {
     id: row.id,
     url: row.url,
     // Fall back to extracting from the URL if the migration left it NULL
-    // (should be rare — only for rows whose URL doesn't parse). This
-    // keeps downstream code from ever seeing an empty host for a
-    // well-formed row.
+    // (should be rare — only for rows whose URL doesn't parse).
     host: row.host ?? hostFromUrl(row.url),
     productCode: row.product_code,
     region: row.region,
     sourceCountry: row.source_country ?? undefined,
-    euVatRate: row.eu_vat_rate ?? undefined,
+    euRefundRate: row.eu_refund_rate ?? undefined,
     productName: row.product_name,
     priceRaw: row.price_raw,
     currency: row.currency,
@@ -96,7 +94,7 @@ export function createItem(input: NewItemInput): TrackedItem {
   getDb()
     .prepare(
       `INSERT INTO tracked_items(
-        id, url, host, product_code, region, source_country, eu_vat_rate,
+        id, url, host, product_code, region, source_country, eu_refund_rate,
         product_name, price_raw, currency, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
@@ -107,7 +105,7 @@ export function createItem(input: NewItemInput): TrackedItem {
       parsed.productCode,
       parsed.sourceRegion,
       parsed.sourceCountry ?? null,
-      parsed.euVatRate ?? null,
+      parsed.euRefundRate ?? null,
       productName,
       input.priceRaw,
       currency,

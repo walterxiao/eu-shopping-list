@@ -15,10 +15,11 @@ export interface ParsedProductUrl {
   /** 2-letter ISO country code if the URL encoded one (e.g. "it"). */
   sourceCountry?: string;
   /**
-   * VAT rate derived from the country code (EU only); undefined for
-   * US URLs and for pan-EU URLs without a country.
+   * Tourist refund rate (approximate) — derived from the country code
+   * (EU only). Undefined for US URLs and for pan-EU URLs without a
+   * country. This is NOT the VAT rate; see EUROZONE_REFUND_RATE below.
    */
-  euVatRate?: number;
+  euRefundRate?: number;
 }
 
 export class ProductUrlParseError extends Error {
@@ -29,30 +30,49 @@ export class ProductUrlParseError extends Error {
 }
 
 /**
- * Standard VAT rates (2024) for every Eurozone country. Used by the
- * analysis step to strip VAT from the raw EU sticker price.
+ * Approximate net tourist-VAT-refund rate per Eurozone country, as
+ * a fraction of the purchase price. When a non-EU visitor claims a
+ * tax-free refund at the airport (via Global Blue / Planet / etc.),
+ * they don't get the full VAT back — the operator deducts processing
+ * fees, so the tourist nets something like 50–70% of the theoretical
+ * maximum VAT. For a €1,000 purchase in Italy (22% VAT, €180 gross
+ * VAT content), the visitor actually pockets about €120 — a 12% net
+ * refund rate.
+ *
+ * These numbers are rough averages for a ~€1000+ purchase via Global
+ * Blue with card refund. Real refunds depend on:
+ *   - the refund operator (Global Blue vs Planet vs Premier)
+ *   - the purchase amount (tiered fees, smaller → worse)
+ *   - cash-at-airport vs card (card is better)
+ *   - whether the store has a tax-free partnership at all
+ * Treat them as directional estimates, not exact values.
+ *
+ * For reference the underlying VAT rates are:
+ *   AT 20 · BE 21 · CY 19 · DE 19 · EE 22 · ES 21 · FI 24 · FR 20
+ *   GR 24 · HR 25 · IE 23 · IT 22 · LT 21 · LU 17 · LV 21 · MT 18
+ *   NL 21 · PT 23 · SI 22 · SK 20
  */
-export const EUROZONE_VAT: Record<string, number> = {
-  at: 0.20,
-  be: 0.21,
-  cy: 0.19,
-  de: 0.19,
-  ee: 0.22,
-  es: 0.21,
-  fi: 0.24,
-  fr: 0.20,
-  gr: 0.24,
-  hr: 0.25,
-  ie: 0.23,
-  it: 0.22,
-  lt: 0.21,
-  lu: 0.17,
-  lv: 0.21,
-  mt: 0.18,
-  nl: 0.21,
-  pt: 0.23,
-  si: 0.22,
-  sk: 0.20,
+export const EUROZONE_REFUND_RATE: Record<string, number> = {
+  at: 0.13,
+  be: 0.13,
+  cy: 0.11,
+  de: 0.11,
+  ee: 0.14,
+  es: 0.13,
+  fi: 0.16,
+  fr: 0.12,
+  gr: 0.15,
+  hr: 0.17,
+  ie: 0.14,
+  it: 0.12,
+  lt: 0.13,
+  lu: 0.10,
+  lv: 0.13,
+  mt: 0.11,
+  nl: 0.10,
+  pt: 0.14,
+  si: 0.13,
+  sk: 0.12,
 };
 
 /**
@@ -80,15 +100,15 @@ const NON_EUR_USD_REJECT: Record<string, string> = {
  * Handles:
  *   - `eu`              → EU (pan-EU, no country)
  *   - `us`, `us-en`, `en-us` → US
- *   - `it`, `de`, `fr`, … → EU with the country's VAT rate
- *   - `it-it`, `en-it`, `de-de`, `en-de`, … → EU with the country's VAT
+ *   - `it`, `de`, `fr`, … → EU with the country's refund rate
+ *   - `it-it`, `en-it`, `de-de`, `en-de`, … → EU with the country's rate
  *   - `uk`, `gb`, `en-gb`, `ch`, `jp`, … → reject (returns error string)
  *   - anything else → null (no match)
  */
 interface RegionMatch {
   region: Region;
   country?: string;
-  vatRate?: number;
+  refundRate?: number;
 }
 type SegmentResult = RegionMatch | { reject: string } | null;
 
@@ -98,8 +118,12 @@ function detectRegion(rawSegment: string): SegmentResult {
   // Bare single-token codes
   if (s === "eu") return { region: "EU" };
   if (s === "us" || s === "us-en" || s === "en-us") return { region: "US" };
-  if (EUROZONE_VAT[s] !== undefined) {
-    return { region: "EU", country: s, vatRate: EUROZONE_VAT[s] };
+  if (EUROZONE_REFUND_RATE[s] !== undefined) {
+    return {
+      region: "EU",
+      country: s,
+      refundRate: EUROZONE_REFUND_RATE[s],
+    };
   }
   if (NON_EUR_USD_REJECT[s] !== undefined) {
     return { reject: NON_EUR_USD_REJECT[s] };
@@ -118,11 +142,11 @@ function detectRegion(rawSegment: string): SegmentResult {
     for (const part of parts) {
       if (part === "us") return { region: "US" };
       if (part === "eu") return { region: "EU" };
-      if (EUROZONE_VAT[part] !== undefined) {
+      if (EUROZONE_REFUND_RATE[part] !== undefined) {
         return {
           region: "EU",
           country: part,
-          vatRate: EUROZONE_VAT[part],
+          refundRate: EUROZONE_REFUND_RATE[part],
         };
       }
     }
@@ -238,6 +262,6 @@ export function parseProductUrl(input: string): ParsedProductUrl {
     productCode,
     sourceRegion: matched.region,
     sourceCountry: matched.country,
-    euVatRate: matched.vatRate,
+    euRefundRate: matched.refundRate,
   };
 }

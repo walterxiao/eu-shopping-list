@@ -1,10 +1,11 @@
 /**
  * Shared domain types for the manual price-tracker app.
  *
- * The user manually enters prices by visiting rimowa.com in a new tab
- * and typing what they see. The backend stores those records; the
- * frontend groups them by product code and computes the EU-vs-US
- * comparison analysis (FX + VAT) as a pure client-side step.
+ * The user manually enters prices by visiting each retailer's website in
+ * a new tab and typing what they see. The backend stores those records;
+ * the frontend groups them by (host, productCode) and computes an
+ * N-way comparison of the tourist's effective net price across every
+ * stored region as a pure client-side step.
  */
 
 export type Region = "EU" | "US";
@@ -19,17 +20,20 @@ export interface TrackedItem {
   /** Hostname extracted from the URL (e.g. "www.rimowa.com"). */
   host: string;
   /**
-   * Product code extracted from the URL — a numeric SKU for Rimowa,
-   * an alphanumeric string for Moncler, etc. Used together with
-   * `host` to pair EU and US entries for the same product.
+   * Product code extracted from the URL. Used together with `host` to
+   * pair items across regions for the same product.
    */
   productCode: string;
   /** Internal bucket (`"EU"` or `"US"`). */
   region: Region;
   /** Country code from URLs like `/it/it/` or `/en-us/`; optional. */
   sourceCountry?: string;
-  /** VAT rate from the country code (EU only); undefined for US. */
-  euVatRate?: number;
+  /**
+   * Approximate tourist VAT-refund rate for this item's country, used
+   * to compute the net price a non-EU traveler actually pays after
+   * claiming the refund at the airport. EU only; undefined for US.
+   */
+  euRefundRate?: number;
   /** User-entered display name. */
   productName: string;
   /** User-entered price in the region's native currency. */
@@ -52,50 +56,56 @@ export interface UpdateItemInput {
   priceRaw?: number;
 }
 
-/** Computed analysis for a paired (EU + US) product. */
-export interface ItemAnalysis {
-  /** USD→EUR rate used for the conversion. */
-  usdToEurRate: number;
+/**
+ * One priced row inside a ComparisonItem. Carries the stored
+ * {@link TrackedItem} plus its derived EUR representation (raw sticker
+ * and net-after-refund) so the UI doesn't have to duplicate the math.
+ */
+export interface ItemPrice {
+  /** The underlying stored record. */
+  item: TrackedItem;
   /**
-   * The VAT rate used to strip tax from the EU raw price. Normally
-   * derived from the EU item's `euVatRate` (e.g. 0.22 for `/it/it/...`),
-   * falling back to 0.19 (DE) for pan-EU `/eu/...` items.
+   * Sticker price normalized to EUR. For USD items this is
+   * `priceRaw * fxRate`; for EUR items it's just `priceRaw`. NaN if
+   * the FX rate is unavailable for a USD item.
    */
-  euVatRateApplied: number;
-  /** EU raw price, already in EUR. */
-  euRawEur: number;
-  /** US raw price converted to EUR. */
-  usRawEur: number;
-  /** EU price with VAT removed, in EUR. */
-  euNetEur: number;
-  /** US price (already pre-sales-tax) in EUR. */
-  usNetEur: number;
-  /** Which region is cheaper on raw (what-you-actually-pay) prices. */
-  cheaperRaw: Region;
-  savingsRawEur: number;
-  savingsRawPercent: number;
-  /** Which region is cheaper after VAT/tax normalization. */
-  cheaperNormalized: Region;
-  savingsNormalizedEur: number;
-  savingsNormalizedPercent: number;
+  rawEur: number;
+  /**
+   * Net price (in EUR) that a non-EU tourist actually pays. For EU
+   * items this is `rawEur * (1 - euRefundRate)`; for US items it's
+   * the same as `rawEur` because there's no tourist refund. NaN if
+   * `rawEur` is NaN.
+   */
+  netEur: number;
+  /**
+   * Original USD sticker for US items — kept so the UI can show
+   * both the dollar number and its EUR conversion side-by-side.
+   * Undefined for EU items.
+   */
+  rawUsd?: number;
 }
 
 /**
- * One row in the comparison grid. Produced by `lib/compute.ts` from
- * the full list of `TrackedItem[]` and the current FX rate.
- *
- * - `ok` → both regions populated, analysis set
- * - `single_eu` → only the EU side exists
- * - `single_us` → only the US side exists
+ * One row in the comparison view: all stored prices for a single
+ * product, across any number of regions. Produced by `lib/compute.ts`
+ * from the full `TrackedItem[]` list and the current FX rate.
  */
 export interface ComparisonItem {
   host: string;
   productCode: string;
   productName: string;
-  eu?: TrackedItem;
-  us?: TrackedItem;
-  analysis?: ItemAnalysis;
-  status: "ok" | "single_eu" | "single_us";
+  /**
+   * Every stored price for this (host, productCode), newest first.
+   * Can have 1..N entries — 1 for a single-region product, 2+ for
+   * multi-region comparisons.
+   */
+  prices: ItemPrice[];
+  /** The FX rate that was used to convert USD → EUR for this card. */
+  fxRate: number | null;
+  /** id of the ItemPrice with the lowest `rawEur` (ties: first wins). */
+  cheapestRawItemId?: string;
+  /** id of the ItemPrice with the lowest `netEur` (ties: first wins). */
+  cheapestNetItemId?: string;
 }
 
 /** Response body for GET /api/items. */

@@ -1,29 +1,30 @@
 # eu-vs-us price compare
 
 > Repo is still named `eu-shopping-list` for historical reasons. The app
-> compares **product prices between the EU and US sites of any
-> retailer** using manually-entered prices and automatic VAT + FX math.
-> It was originally built around Rimowa, but v5 generalizes the URL
-> parser so any brand with a recognizable locale segment and trailing
-> product code works — Rimowa, Moncler, Louis Vuitton, and anything
-> structurally similar.
+> compares **product prices across as many regions as you like** using
+> manually-entered prices and automatic tourist-refund + FX math.
+> It started as a Rimowa EU-vs-US checker but now works with any brand
+> that has a recognizable locale segment and trailing product code —
+> Rimowa, Moncler, Louis Vuitton, and anything structurally similar.
 
-A small full-stack app for travelers who want to decide whether to buy
-a luxury item (suitcase, jacket, watch, …) in the EU or the US. The
-app **never fetches any retailer itself** — instead, you visit the
-site yourself, read the current price, paste the URL into the app
-along with the price you saw, and the app handles:
+A small full-stack app for travelers deciding where to buy a luxury
+item (suitcase, jacket, watch, …) across regions. The app **never
+fetches any retailer itself** — instead, you visit the site yourself,
+read the current price, paste the URL and the price you saw, and the
+app handles:
 
 - Persisting your tracked items in SQLite so they survive restarts
-- Pairing EU and US items automatically by `(host, productCode)` —
-  scoping the pairing to the same host so two unrelated brands with a
-  coincidentally-matching SKU never get cross-paired
-- Stripping the correct per-country VAT from EU prices (22% for Italy,
-  20% for France, 19% for Germany, …)
+- Pairing items automatically by `(host, productCode)` so multiple
+  country versions of the same product end up on one card
+- **Supports 2+ regions per product** — compare US + IT + DE + FR
+  all on the same card (not just EU vs US)
+- Modeling the **tourist VAT refund** (Global Blue / Planet) for each
+  EU country so the "Net" column reflects what a non-EU visitor
+  actually pays at the airport, not a theoretical pre-VAT wholesale
+  price
 - Fetching and caching the USD→EUR rate from exchangerate.host (24 h)
-- Computing both "raw" (what-you-actually-pay) and "pre-tax"
-  (apples-to-apples) comparisons
-- Highlighting the cheaper region on each axis
+- Highlighting the cheapest region on both the raw-sticker and
+  after-refund axes
 
 ## Quick start (native)
 
@@ -48,43 +49,55 @@ container restarts.
 
 ## Usage walkthrough
 
-1. **Open the retailer's site in a new tab** — navigate to a product
+1. **Click `+ Track a new item`** in the top-right of the page — a
+   modal opens.
+
+2. **Open the retailer's site in a new tab** — navigate to a product
    you're thinking of buying. A few examples that parse successfully:
    - <https://www.rimowa.com/it/it/luggage/colour/silver/cabin/97353004.html>
    - <https://www.moncler.com/en-us/men/outerwear/windbreakers-and-raincoats/etiache-hooded-rain-jacket-navy-blue-L10911A001605968E742.html>
 
-2. **Copy the URL** and paste it into the app's URL field. Metadata
-   badges appear immediately showing the host, extracted region,
-   country, VAT rate, and product code. The app also shows a small
-   "Open page to read price ↗" link that re-opens the page in a new
-   tab in case you closed it.
+3. **Paste the URL** into the modal's URL field. Metadata badges
+   appear immediately: host, region, country code, tourist refund
+   rate, product code. The modal also shows an "Open page ↗" link
+   in case you closed the retailer tab.
 
-3. **Read the price on the retailer's page** (the real price you'd
-   actually pay, including VAT for EU sites).
+4. **Read the price on the retailer's page** (the real sticker —
+   what you'd pay at the counter, including VAT in the EU).
 
-4. **Back in the app**, type the product name and price, then click
-   **Save item**. The item appears in the list on the left, marked
-   with `www.moncler.com · EU · IT` (or whichever host/region applies).
+5. **Type the product name and price**, click **Save item**. The
+   modal closes and a card appears on the right with your item.
 
-5. **Repeat for the US side** — visit the same product on the
-   retailer's US site, read the USD price, paste that URL into the
-   app, and save. (The app will auto-suggest the product name because
-   the `(host, productCode)` pair already exists.)
+6. **Add more regions to the same product.** Scroll to the card and
+   click **+ Add another region**. A small inline form appears
+   right on the card — paste the URL for a different country
+   (say `/de-de/` or `/us-en/`), enter that country's price, click
+   **Add**. The app validates that the URL is for the same product
+   (same host + same product code) and adds a new row to the card.
+   You can repeat this as many times as you like — compare US + IT +
+   DE + FR side-by-side on one card.
 
-6. **The comparison card populates automatically** on the right
-   because both regions now have a record for the same product code
-   on the same host. It shows:
-   - EU raw (with country VAT) and pre-tax (with the country VAT
-     stripped out)
-   - US raw in USD with the EUR conversion shown alongside
-   - Which region is cheaper on the raw axis and by how much
-   - Which region is cheaper on the normalized axis and by how much
+7. **Read the comparison.** The card shows a table with one row per
+   stored region. Columns: region badge, sticker price (in native
+   currency, with EUR conversion for US), refund rate, net-in-EUR
+   after refund, last-updated timestamp, edit/delete buttons. The
+   cheapest-after-refund row is highlighted green, and a footer
+   line summarizes the winner.
 
-7. **When you want to check for price changes**, click the stored URL
-   in the item list (opens in a new tab), read the current price on
-   the retailer's site, come back to the app, click **Edit** on the
-   row, type the new price, click **Save**. The comparison card
-   updates instantly.
+8. **Update prices as they change.** Click the stored URL to revisit
+   the retailer (opens in a new tab). Read the new price, come back
+   to the app, click **Edit** on that row, type the new number,
+   click **Save**. The comparison updates instantly.
+
+### Keyboard & UX notes
+
+- The modal closes on `Escape` or clicking outside the dialog.
+- The "Add another region" form is validated inline: paste a URL
+  from a different host or different product code and you'll see
+  "URL host doesn't match this card" before you can submit.
+- If you re-paste a URL for a region you already tracked, the form
+  rejects with "an entry for that region already exists — edit it
+  instead".
 
 ## Supported URL shapes
 
@@ -95,15 +108,18 @@ recognizable locale segment and a trailing product code works. See
 **Locale segment** (one of these, scanned in the first 3 path
 segments, case-insensitive):
 
-- `/eu/` — pan-EU (default 19% VAT)
-- `/us-en/`, `/en-us/`, or `/us/` — US
+- `/eu/` — pan-EU (default ~12% tourist refund)
+- `/us-en/`, `/en-us/`, or `/us/` — US (no tourist refund)
 - `/it/`, `/de/`, `/fr/`, `/es/`, `/nl/`, … — any of the 20 Eurozone
   country codes (AT, BE, CY, DE, EE, ES, FI, FR, GR, HR, IE, IT, LT,
   LU, LV, MT, NL, PT, SI, SK)
 - Hyphenated pairs like `/it-it/`, `/en-it/`, `/de-de/`, `/fr-fr/`,
   `/en-us/` — either half can carry the country signal
-- The "pre-tax" normalization uses the correct national VAT rate
-  (22% for IT, 20% for FR, 19% for DE, 17% for LU, 25% for HR, …)
+- The "Net (EUR)" column uses an approximate **tourist refund rate**
+  per country (Italy ~12%, Germany ~11%, Finland ~16%, …). This is
+  NOT the VAT rate — it's the net amount a non-EU visitor receives
+  back from Global Blue / Planet at the airport, after processing
+  fees are deducted. See `lib/product-url.ts` for the full table.
 
 **Product code** (extracted from the last path segment, stripping
 `.html`/`.htm`):
@@ -151,9 +167,9 @@ The backend's only jobs are:
    in the `fx_cache` table
 
 It never fetches any retailer. The comparison analysis (grouping by
-`(host, productCode)`, VAT normalization, FX conversion, winner
-selection) runs client-side as a pure function on the items + rate
-the server returned.
+`(host, productCode)`, tourist-refund normalization, FX conversion,
+winner selection) runs client-side as a pure function on the items +
+rate the server returned.
 
 ## Scripts
 
@@ -169,29 +185,28 @@ the server returned.
 
 ## Testing
 
-95 tests across five files:
+97 tests across five files:
 
 - `tests/product-url.test.ts` (38) — URL parsing: Rimowa (numeric
   SKU) and Moncler (alphanumeric SKU) happy paths, every Eurozone
-  country code, every rejected non-EUR/non-USD country, hostname
-  normalization, non-http protocol rejection, edge cases around
-  product code extraction (trailing-digit vs dashed-alphanumeric vs
-  bare-alphanumeric ASIN)
+  country code with its refund rate, every rejected non-EUR/non-USD
+  country, hostname normalization, non-http protocol rejection,
+  edge cases around product code extraction
 - `tests/price-parse.test.ts` (26) — US and EU number formats,
   currency symbols, thousands separators, invalid input
 - `tests/fx.test.ts` (5) — FX fetcher with mocked HTTP: cache hits,
   stale fallback, hardcoded fallback, malformed payload
-- `tests/items-store.test.ts` (14) — in-memory CRUD: EU metadata
-  derivation, IT per-country VAT, US currency, host field, Moncler
-  alphanumeric SKU handling, malformed URL rejection, GBP
-  rejection, name + price validation, newest-first ordering, update
-  bumps updatedAt, delete returns true/false
-- `tests/compute.test.ts` (12) — pure grouping function: empty
-  input, single-side cards, paired analysis, per-country VAT
-  differences (DE 19% vs IT 22% on identical raw prices),
-  multi-product grouping, same-code dedup, null FX rate,
-  cross-host collision guard (same product code under different
-  hosts stays unpaired)
+- `tests/items-store.test.ts` (18) — in-memory CRUD + on-disk v4→v6
+  upgrade migration: EU metadata derivation, per-country refund
+  rate (IT 0.12), US currency, host field, Moncler alphanumeric
+  SKU, malformed URL rejection, GBP rejection, newest-first
+  ordering, migration: add host column, rename eu_vat_rate →
+  eu_refund_rate, rewrite 0.22 → 0.12, set user_version to 6
+- `tests/compute.test.ts` (10) — pure grouping function: empty
+  input, single-region card, paired EU + US with refund math,
+  **3+ region comparison** (DE / IT / FR / US on one product),
+  per-country refund rates, null FX rate (NaN-safe), cross-host
+  collision guard
 
 ## Data persistence
 

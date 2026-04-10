@@ -7,7 +7,7 @@ import type {
   ListItemsResponse,
   TrackedItem,
 } from "@/lib/types";
-import ShoppingListPanel from "./ShoppingListPanel";
+import AddItemModal from "./AddItemModal";
 import ComparisonGrid from "./ComparisonGrid";
 import {
   LegalDisclaimerBanner,
@@ -32,6 +32,7 @@ export default function ShoppingListApp() {
   const [fx, setFx] = useState<FxResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [fxError, setFxError] = useState<string | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
 
   // Initial load.
   useEffect(() => {
@@ -119,35 +120,41 @@ export default function ShoppingListApp() {
     <div className="min-h-screen bg-neutral-50">
       <LegalDisclaimerBanner />
       <header className="border-b border-neutral-200 bg-white px-4 py-4">
-        <div className="mx-auto max-w-6xl">
-          <h1 className="text-xl font-bold">EU vs US price check</h1>
-          <p className="text-sm text-neutral-600">
-            Track product prices you&apos;ve seen on any retailer, compare
-            US and EU side-by-side with VAT normalization and live FX.
-          </p>
+        <div className="mx-auto flex max-w-4xl items-start justify-between gap-3">
+          <div>
+            <h1 className="text-xl font-bold">EU vs US price check</h1>
+            <p className="text-sm text-neutral-600">
+              Track product prices across regions and compare them
+              side-by-side with live FX and tourist refund estimates.
+            </p>
+          </div>
+          <button
+            onClick={() => setModalOpen(true)}
+            className="shrink-0 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700"
+          >
+            + Track a new item
+          </button>
         </div>
       </header>
-      <main className="mx-auto grid max-w-6xl grid-cols-1 gap-4 p-4 lg:grid-cols-12">
-        <div className="lg:col-span-5">
-          <ShoppingListPanel
-            items={items}
-            onAdd={onAdd}
-            onUpdate={onUpdate}
-            onRemove={onRemove}
-            busy={loading}
-          />
-        </div>
-        <div className="lg:col-span-7">
-          <ComparisonGrid
-            loading={loading}
-            items={comparison}
-            fxRate={fx?.rate ?? null}
-            fxSource={fx?.source ?? null}
-            fxError={fxError}
-          />
-        </div>
+      <main className="mx-auto max-w-4xl p-4">
+        <ComparisonGrid
+          loading={loading}
+          items={comparison}
+          fxRate={fx?.rate ?? null}
+          fxSource={fx?.source ?? null}
+          fxError={fxError}
+          onAdd={onAdd}
+          onUpdate={onUpdate}
+          onRemove={onRemove}
+        />
       </main>
       <LegalDisclaimerFooter />
+      <AddItemModal
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        items={items}
+        onAdd={onAdd}
+      />
     </div>
   );
 }

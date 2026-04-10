@@ -1,75 +1,59 @@
 import type {
   ComparisonItem,
-  ItemAnalysis,
-  Region,
+  ItemPrice,
   TrackedItem,
 } from "./types";
 
-/** Default VAT rate applied to pan-EU `/eu/...` URLs that carry no country. */
-const DEFAULT_EU_VAT_RATE = 0.19;
+/**
+ * Default tourist refund rate applied to pan-EU (`/eu/...`) URLs that
+ * don't carry a specific country code. An approximation of the
+ * Italian / French / Spanish net refund for a ~€1000 Global Blue
+ * purchase.
+ */
+const DEFAULT_EU_REFUND_RATE = 0.12;
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-/** Compute the full side-by-side analysis for one paired (EU, US) product. */
-function computeAnalysis(
-  eu: TrackedItem,
-  us: TrackedItem,
-  usdToEurRate: number,
-): ItemAnalysis {
-  const euVatRate = eu.euVatRate ?? DEFAULT_EU_VAT_RATE;
-
-  const euRawEur = round2(eu.priceRaw);
-  const usRawEur = round2(us.priceRaw * usdToEurRate);
-
-  // EU raw price includes country-specific VAT; strip it out.
-  const euNetEur = round2(eu.priceRaw / (1 + euVatRate));
-  // US raw price is already pre-sales-tax on the site.
-  const usNetEur = round2(us.priceRaw * usdToEurRate);
-
-  const cheaperRaw: Region = usRawEur <= euRawEur ? "US" : "EU";
-  const rawHigh = Math.max(euRawEur, usRawEur);
-  const rawLow = Math.min(euRawEur, usRawEur);
-  const savingsRawEur = round2(rawHigh - rawLow);
-  const savingsRawPercent =
-    rawHigh === 0 ? 0 : round2((savingsRawEur / rawHigh) * 100);
-
-  const cheaperNormalized: Region = usNetEur <= euNetEur ? "US" : "EU";
-  const netHigh = Math.max(euNetEur, usNetEur);
-  const netLow = Math.min(euNetEur, usNetEur);
-  const savingsNormalizedEur = round2(netHigh - netLow);
-  const savingsNormalizedPercent =
-    netHigh === 0 ? 0 : round2((savingsNormalizedEur / netHigh) * 100);
-
-  return {
-    usdToEurRate,
-    euVatRateApplied: euVatRate,
-    euRawEur,
-    usRawEur,
-    euNetEur,
-    usNetEur,
-    cheaperRaw,
-    savingsRawEur,
-    savingsRawPercent,
-    cheaperNormalized,
-    savingsNormalizedEur,
-    savingsNormalizedPercent,
-  };
-}
-
-/** Returns the item with the newer `updatedAt` (ties broken by string order). */
-function pickNewest(a: TrackedItem, b: TrackedItem): TrackedItem {
-  return a.updatedAt >= b.updatedAt ? a : b;
+/**
+ * Derive the EUR price representation for a single stored item given
+ * the current FX rate. For EU items:
+ *   - `rawEur` = priceRaw (already EUR)
+ *   - `netEur` = rawEur * (1 - refundRate)
+ * For US items:
+ *   - `rawUsd` = priceRaw (USD sticker)
+ *   - `rawEur` = rawUsd * fxRate
+ *   - `netEur` = rawEur (no tourist VAT refund in the US)
+ * If fxRate is null and the item is USD, both rawEur and netEur are
+ * NaN — the UI shows the raw USD number and a "FX unavailable"
+ * indicator.
+ */
+function priceForItem(
+  item: TrackedItem,
+  fxRate: number | null,
+): ItemPrice {
+  if (item.currency === "USD") {
+    const rawUsd = item.priceRaw;
+    const rawEur = fxRate != null ? round2(rawUsd * fxRate) : NaN;
+    // US has no tourist VAT refund; net === raw.
+    const netEur = rawEur;
+    return { item, rawEur, netEur, rawUsd };
+  }
+  // EU / EUR
+  const rawEur = round2(item.priceRaw);
+  const refundRate = item.euRefundRate ?? DEFAULT_EU_REFUND_RATE;
+  const netEur = round2(rawEur * (1 - refundRate));
+  return { item, rawEur, netEur };
 }
 
 /**
  * Group tracked items by (host, productCode) and, for each group,
- * attach the latest EU + US entries (if present) along with the
- * computed analysis. Pairing is scoped to the same host because
- * product codes from different brands live in different namespaces
- * — a Rimowa "92552634" and a hypothetical Moncler "92552634" are
- * not the same product.
+ * return an N-wide comparison. Every stored item for a product
+ * becomes its own row (US, IT, DE, FR, …) so the user can compare
+ * three or more regions side-by-side. Pairing is scoped to the same
+ * host because product codes from different brands live in different
+ * namespaces.
  *
  * Pure function — no React, no side effects, no network. Deterministic
  * for the same `(items, fxRate)` input.
@@ -78,71 +62,63 @@ export function groupAndAnalyze(
   items: TrackedItem[],
   fxRate: number | null,
 ): ComparisonItem[] {
-  const groups = new Map<
-    string,
-    { host: string; productCode: string; eu?: TrackedItem; us?: TrackedItem }
-  >();
-
+  const groups = new Map<string, TrackedItem[]>();
   for (const item of items) {
     const key = `${item.host}\u0000${item.productCode}`;
-    let bucket = groups.get(key);
-    if (!bucket) {
-      bucket = { host: item.host, productCode: item.productCode };
-      groups.set(key, bucket);
-    }
-    if (item.region === "EU") {
-      bucket.eu = bucket.eu ? pickNewest(bucket.eu, item) : item;
+    const existing = groups.get(key);
+    if (existing) {
+      existing.push(item);
     } else {
-      bucket.us = bucket.us ? pickNewest(bucket.us, item) : item;
+      groups.set(key, [item]);
     }
   }
 
   const result: ComparisonItem[] = [];
-  for (const { host, productCode, eu, us } of groups.values()) {
-    const productName = eu?.productName ?? us?.productName ?? productCode;
+  for (const groupItems of groups.values()) {
+    // Stable display order: newest updates first.
+    const sorted = [...groupItems].sort((a, b) =>
+      b.updatedAt.localeCompare(a.updatedAt),
+    );
+    const host = sorted[0].host;
+    const productCode = sorted[0].productCode;
+    // Prefer the first non-empty productName as the card title.
+    const productName =
+      sorted.find((x) => x.productName?.trim())?.productName ?? productCode;
 
-    if (eu && us && fxRate != null) {
-      result.push({
-        host,
-        productCode,
-        productName,
-        eu,
-        us,
-        analysis: computeAnalysis(eu, us, fxRate),
-        status: "ok",
-      });
-    } else if (eu && us) {
-      // Paired but FX rate not available — still show the card with
-      // raw prices, no analysis.
-      result.push({ host, productCode, productName, eu, us, status: "ok" });
-    } else if (eu) {
-      result.push({
-        host,
-        productCode,
-        productName,
-        eu,
-        status: "single_eu",
-      });
-    } else if (us) {
-      result.push({
-        host,
-        productCode,
-        productName,
-        us,
-        status: "single_us",
-      });
-    }
+    const prices = sorted.map((it) => priceForItem(it, fxRate));
+
+    // Cheapest across every priced row where we actually have a
+    // finite number (so USD items during an FX outage are excluded
+    // from the winner selection but still shown in the card).
+    const withRaw = prices.filter((p) => Number.isFinite(p.rawEur));
+    const withNet = prices.filter((p) => Number.isFinite(p.netEur));
+    const cheapestRaw =
+      withRaw.length > 0
+        ? withRaw.reduce((a, b) => (a.rawEur <= b.rawEur ? a : b))
+        : undefined;
+    const cheapestNet =
+      withNet.length > 0
+        ? withNet.reduce((a, b) => (a.netEur <= b.netEur ? a : b))
+        : undefined;
+
+    result.push({
+      host,
+      productCode,
+      productName,
+      prices,
+      fxRate,
+      cheapestRawItemId: cheapestRaw?.item.id,
+      cheapestNetItemId: cheapestNet?.item.id,
+    });
   }
 
-  // Newest-first ordering: use the max updatedAt across eu/us.
+  // Overall card order: newest touched first.
   result.sort((a, b) => {
     const at = Math.max(
-      a.eu ? Date.parse(a.eu.updatedAt) : 0,
-      a.us ? Date.parse(a.us.updatedAt) : 0,
+      ...a.prices.map((p) => Date.parse(p.item.updatedAt) || 0),
     );
     const bt = Math.max(
-      b.eu ? Date.parse(b.eu.updatedAt) : 0,
-      b.us ? Date.parse(b.us.updatedAt) : 0,
+      ...b.prices.map((p) => Date.parse(p.item.updatedAt) || 0),
     );
     return bt - at;
   });

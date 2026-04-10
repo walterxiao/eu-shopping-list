@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   parseProductUrl,
   ProductUrlParseError,
-  EUROZONE_VAT,
+  EUROZONE_REFUND_RATE,
 } from "@/lib/product-url";
 
 // ------------------------------------------------------------------
@@ -18,7 +18,7 @@ describe("parseProductUrl — Rimowa pan-EU and US", () => {
     expect(parsed.productCode).toBe("92552634");
     expect(parsed.sourceRegion).toBe("EU");
     expect(parsed.sourceCountry).toBeUndefined();
-    expect(parsed.euVatRate).toBeUndefined();
+    expect(parsed.euRefundRate).toBeUndefined();
   });
 
   it("parses a standard /us-en/ Rimowa URL", () => {
@@ -28,7 +28,7 @@ describe("parseProductUrl — Rimowa pan-EU and US", () => {
     expect(parsed.productCode).toBe("92552634");
     expect(parsed.sourceRegion).toBe("US");
     expect(parsed.sourceCountry).toBeUndefined();
-    expect(parsed.euVatRate).toBeUndefined();
+    expect(parsed.euRefundRate).toBeUndefined();
   });
 
   it("parses /us/ (without the -en) as US", () => {
@@ -75,54 +75,54 @@ describe("parseProductUrl — Rimowa pan-EU and US", () => {
 });
 
 describe("parseProductUrl — Rimowa Eurozone country subdomains", () => {
-  it("parses /it/it/ (Italian) with 22% VAT", () => {
+  it("parses /it/it/ (Italian) with ~12% tourist refund rate", () => {
     const parsed = parseProductUrl(
       "https://www.rimowa.com/it/it/luggage/colour/silver/cabin/97353004.html",
     );
     expect(parsed.productCode).toBe("97353004");
     expect(parsed.sourceRegion).toBe("EU");
     expect(parsed.sourceCountry).toBe("it");
-    expect(parsed.euVatRate).toBe(0.22);
+    expect(parsed.euRefundRate).toBe(0.12);
   });
 
-  it("parses /de/de/ (Germany) with 19% VAT", () => {
+  it("parses /de/de/ (Germany) with ~11% refund rate", () => {
     const parsed = parseProductUrl(
       "https://www.rimowa.com/de/de/luggage/cabin/92552634.html",
     );
     expect(parsed.sourceCountry).toBe("de");
-    expect(parsed.euVatRate).toBe(0.19);
+    expect(parsed.euRefundRate).toBe(0.11);
   });
 
-  it("parses /fr/fr/ (France) with 20% VAT", () => {
+  it("parses /fr/fr/ (France) with ~12% refund rate", () => {
     const parsed = parseProductUrl(
       "https://www.rimowa.com/fr/fr/luggage/cabin/92552634.html",
     );
     expect(parsed.sourceCountry).toBe("fr");
-    expect(parsed.euVatRate).toBe(0.20);
+    expect(parsed.euRefundRate).toBe(0.12);
   });
 
-  it("parses /es/es/ (Spain) with 21% VAT", () => {
+  it("parses /es/es/ (Spain) with ~13% refund rate", () => {
     const parsed = parseProductUrl(
       "https://www.rimowa.com/es/es/luggage/cabin/92552634.html",
     );
     expect(parsed.sourceCountry).toBe("es");
-    expect(parsed.euVatRate).toBe(0.21);
+    expect(parsed.euRefundRate).toBe(0.13);
   });
 
-  it("parses /nl/nl/ (Netherlands) with 21% VAT", () => {
+  it("parses /nl/nl/ (Netherlands) with ~10% refund rate", () => {
     const parsed = parseProductUrl(
       "https://www.rimowa.com/nl/nl/luggage/cabin/92552634.html",
     );
     expect(parsed.sourceCountry).toBe("nl");
-    expect(parsed.euVatRate).toBe(0.21);
+    expect(parsed.euRefundRate).toBe(0.10);
   });
 
-  it("parses /pt/pt/ (Portugal) with 23% VAT", () => {
+  it("parses /pt/pt/ (Portugal) with ~14% refund rate", () => {
     const parsed = parseProductUrl(
       "https://www.rimowa.com/pt/pt/luggage/cabin/92552634.html",
     );
     expect(parsed.sourceCountry).toBe("pt");
-    expect(parsed.euVatRate).toBe(0.23);
+    expect(parsed.euRefundRate).toBe(0.14);
   });
 
   it("is case-insensitive for country codes", () => {
@@ -130,18 +130,17 @@ describe("parseProductUrl — Rimowa Eurozone country subdomains", () => {
       "https://www.rimowa.com/IT/IT/luggage/cabin/92552634.html",
     );
     expect(parsed.sourceCountry).toBe("it");
-    expect(parsed.euVatRate).toBe(0.22);
+    expect(parsed.euRefundRate).toBe(0.12);
   });
 
-  it("covers every country in EUROZONE_VAT", () => {
-    // Guarantees we don't accidentally drop a country from the map.
-    for (const country of Object.keys(EUROZONE_VAT)) {
+  it("covers every country in EUROZONE_REFUND_RATE", () => {
+    for (const country of Object.keys(EUROZONE_REFUND_RATE)) {
       const parsed = parseProductUrl(
         `https://www.rimowa.com/${country}/en/luggage/cabin/92552634.html`,
       );
       expect(parsed.sourceRegion).toBe("EU");
       expect(parsed.sourceCountry).toBe(country);
-      expect(parsed.euVatRate).toBe(EUROZONE_VAT[country]);
+      expect(parsed.euRefundRate).toBe(EUROZONE_REFUND_RATE[country]);
     }
   });
 });
@@ -168,30 +167,30 @@ describe("parseProductUrl — Moncler (alphanumeric SKU, en-us locale)", () => {
     expect(parsed.sourceRegion).toBe("US");
     expect(parsed.productCode).toBe("L10911A001605968E742");
     expect(parsed.sourceCountry).toBeUndefined();
-    expect(parsed.euVatRate).toBeUndefined();
+    expect(parsed.euRefundRate).toBeUndefined();
   });
 
-  it("parses a /it-it/ Moncler Italy URL with 22% VAT", () => {
+  it("parses a /it-it/ Moncler Italy URL with ~12% refund rate", () => {
     const parsed = parseProductUrl(MONCLER_IT);
     expect(parsed.host).toBe("www.moncler.com");
     expect(parsed.sourceRegion).toBe("EU");
     expect(parsed.productCode).toBe("L10911A001605968E742");
     expect(parsed.sourceCountry).toBe("it");
-    expect(parsed.euVatRate).toBe(0.22);
+    expect(parsed.euRefundRate).toBe(0.12);
   });
 
-  it("parses a /fr-fr/ Moncler France URL with 20% VAT", () => {
+  it("parses a /fr-fr/ Moncler France URL with ~12% refund rate", () => {
     const parsed = parseProductUrl(MONCLER_FR);
     expect(parsed.sourceRegion).toBe("EU");
     expect(parsed.sourceCountry).toBe("fr");
-    expect(parsed.euVatRate).toBe(0.20);
+    expect(parsed.euRefundRate).toBe(0.12);
   });
 
-  it("parses a /de-de/ Moncler Germany URL with 19% VAT", () => {
+  it("parses a /de-de/ Moncler Germany URL with ~11% refund rate", () => {
     const parsed = parseProductUrl(MONCLER_DE);
     expect(parsed.sourceRegion).toBe("EU");
     expect(parsed.sourceCountry).toBe("de");
-    expect(parsed.euVatRate).toBe(0.19);
+    expect(parsed.euRefundRate).toBe(0.11);
   });
 
   it("rejects a /en-gb/ Moncler UK URL with a GBP reason", () => {

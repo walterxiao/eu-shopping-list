@@ -48,7 +48,7 @@ describe("items-store", () => {
     expect(item.productCode).toBe("92552634");
     expect(item.region).toBe("EU");
     expect(item.sourceCountry).toBeUndefined();
-    expect(item.euVatRate).toBeUndefined();
+    expect(item.euRefundRate).toBeUndefined();
     expect(item.currency).toBe("EUR");
     expect(item.priceRaw).toBe(1350);
     expect(item.productName).toBe("Original Cabin — Black");
@@ -77,11 +77,11 @@ describe("items-store", () => {
     expect(item.productCode).toBe("L10911A001605968E742");
     expect(item.region).toBe("EU");
     expect(item.sourceCountry).toBe("it");
-    expect(item.euVatRate).toBe(0.22);
+    expect(item.euRefundRate).toBe(0.12);
     expect(item.currency).toBe("EUR");
   });
 
-  it("creates an Italian item with the correct per-country VAT rate", () => {
+  it("creates an Italian item with the correct per-country refund rate", () => {
     const item = createItem({
       url: IT_URL,
       productName: "Classic Cabin — Silver",
@@ -89,18 +89,18 @@ describe("items-store", () => {
     });
     expect(item.region).toBe("EU");
     expect(item.sourceCountry).toBe("it");
-    expect(item.euVatRate).toBe(0.22);
+    expect(item.euRefundRate).toBe(0.12);
     expect(item.currency).toBe("EUR");
   });
 
-  it("creates a US item with USD currency and no VAT rate", () => {
+  it("creates a US item with USD currency and no refund rate", () => {
     const item = createItem({
       url: US_URL,
       productName: "Original Cabin — Black",
       priceRaw: 1300,
     });
     expect(item.region).toBe("US");
-    expect(item.euVatRate).toBeUndefined();
+    expect(item.euRefundRate).toBeUndefined();
     expect(item.currency).toBe("USD");
   });
 
@@ -171,15 +171,16 @@ describe("items-store", () => {
 });
 
 // ------------------------------------------------------------------
-// Regression guard for the v4 → v5 upgrade path
+// Regression guard for the v4 → v6 upgrade path
 // ------------------------------------------------------------------
 
-describe("items-store — v4 → v5 upgrade migration", () => {
+describe("items-store — v4 → v6 upgrade migration", () => {
   // These tests point at a real tempfile instead of the :memory:
-  // default (set by vitest.config.ts) because the bug they guard
-  // against only reproduces when there's an existing on-disk
+  // default (set by vitest.config.ts) because the bugs they guard
+  // against only reproduce when there's an existing on-disk
   // database from a previous schema version. An in-memory DB is
-  // always created from scratch.
+  // always created from scratch, so the schema migration paths
+  // (ensureHostColumn for v5, runV6Migration for v6) never run.
   const tmpPath = join(tmpdir(), `items-store-upgrade-${process.pid}.sqlite`);
 
   function cleanupTmp(): void {
@@ -198,8 +199,12 @@ describe("items-store — v4 → v5 upgrade migration", () => {
     cleanupTmp();
 
     // Create a v4-shape database: tracked_items with NO host column
-    // and NO host-aware index. Seed one legacy row so we can assert
-    // the backfill runs.
+    // and NO host-aware index, column still named `eu_vat_rate`, and
+    // user_version still at 0. Seed two legacy rows:
+    //   - one pan-EU row with no country (tests the host backfill
+    //     and the v6 rate-rewrite default path)
+    //   - one Italian row with eu_vat_rate = 0.22 (tests that the
+    //     v6 migration actually rewrites it to 0.12)
     const seed = new Database(tmpPath);
     seed.pragma("journal_mode = WAL");
     seed.exec(`
@@ -223,25 +228,37 @@ describe("items-store — v4 → v5 upgrade migration", () => {
         fetched_at INTEGER NOT NULL
       );
     `);
-    seed
-      .prepare(
-        `INSERT INTO tracked_items(
-          id, url, product_code, region, source_country, eu_vat_rate,
-          product_name, price_raw, currency, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        "legacy-1",
-        "https://www.rimowa.com/eu/en/old/92552634.html",
-        "92552634",
-        "EU",
-        null,
-        null,
-        "Legacy Rimowa Item",
-        1000,
-        "EUR",
-        Math.floor(Date.now() / 1000),
-      );
+    const insert = seed.prepare(
+      `INSERT INTO tracked_items(
+        id, url, product_code, region, source_country, eu_vat_rate,
+        product_name, price_raw, currency, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    const now = Math.floor(Date.now() / 1000);
+    insert.run(
+      "legacy-eu",
+      "https://www.rimowa.com/eu/en/old/92552634.html",
+      "92552634",
+      "EU",
+      null,
+      null,
+      "Legacy Rimowa Item",
+      1000,
+      "EUR",
+      now,
+    );
+    insert.run(
+      "legacy-it",
+      "https://www.rimowa.com/it/it/old/97353004.html",
+      "97353004",
+      "EU",
+      "it",
+      0.22, // the old v5 Italian VAT rate — v6 migration must rewrite
+      "Legacy Italian Item",
+      1275,
+      "EUR",
+      now,
+    );
     seed.close();
 
     // Point the items-store at the tempfile for this describe block.
@@ -254,18 +271,18 @@ describe("items-store — v4 → v5 upgrade migration", () => {
     cleanupTmp();
   });
 
-  it("opens a v4-shape DB without throwing (migration adds host column + index)", () => {
-    // BUG REPRODUCED BY THIS TEST:
+  it("opens a v4-shape DB without throwing (adds host column + v6 column rename)", () => {
+    // Two historical bugs this guards against:
     //
-    //   SqliteError: no such column: host
-    //     at getDb (lib/db.ts)
+    // 1) v5 — SqliteError: no such column: host
+    //    SCHEMA_SQL had a CREATE INDEX referencing `host` that ran
+    //    before ensureHostColumn() had a chance to ALTER it in.
+    // 2) v6 — runV6Migration must ALTER TABLE RENAME COLUMN
+    //    `eu_vat_rate` → `eu_refund_rate` BEFORE items-store tries
+    //    to INSERT using the new column name.
     //
-    // Root cause: SCHEMA_SQL used to contain
-    //   CREATE INDEX ... ON tracked_items(host, product_code)
-    // which runs BEFORE ensureHostColumn() has had a chance to
-    // ALTER the column in on an upgraded v4 database. The fix
-    // moves the host-aware index creation inside ensureHostColumn,
-    // after the ALTER TABLE.
+    // Calling createItem() exercises both migrations and the
+    // subsequent INSERT.
     const item = createItem({
       url: "https://www.rimowa.com/it/it/luggage/97353004.html",
       productName: "Classic Cabin Silver",
@@ -275,15 +292,38 @@ describe("items-store — v4 → v5 upgrade migration", () => {
     expect(item.productCode).toBe("97353004");
     expect(item.region).toBe("EU");
     expect(item.sourceCountry).toBe("it");
+    // The new item is stored under the renamed column and with the
+    // v6 refund-rate value.
+    expect(item.euRefundRate).toBe(0.12);
   });
 
   it("backfills host on legacy rows that were inserted pre-v5", () => {
-    // Triggering listItems causes getDb() which runs the migration.
     const all = listItems();
-    const legacy = all.find((i) => i.id === "legacy-1");
+    const legacy = all.find((i) => i.id === "legacy-eu");
     expect(legacy).toBeDefined();
-    // The backfill should derive host from the url column.
     expect(legacy!.host).toBe("www.rimowa.com");
     expect(legacy!.productName).toBe("Legacy Rimowa Item");
+  });
+
+  it("rewrites eu_vat_rate 0.22 → eu_refund_rate 0.12 for the Italian legacy row", () => {
+    const all = listItems();
+    const legacy = all.find((i) => i.id === "legacy-it");
+    expect(legacy).toBeDefined();
+    // The v6 migration should have looked up source_country='it' in
+    // EUROZONE_REFUND_RATE and written 0.12 to the renamed column.
+    expect(legacy!.sourceCountry).toBe("it");
+    expect(legacy!.euRefundRate).toBe(0.12);
+  });
+
+  it("sets user_version to 6 so the migration doesn't re-run", () => {
+    // Touch the DB once so the migration runs.
+    listItems();
+    // Open a read-only handle and check the pragma.
+    const db = new Database(tmpPath, { readonly: true });
+    const row = db
+      .prepare("PRAGMA user_version")
+      .get() as { user_version: number };
+    db.close();
+    expect(row.user_version).toBe(6);
   });
 });
