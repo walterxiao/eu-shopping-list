@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { parseRimowaUrl, RimowaUrlParseError } from "@/lib/rimowa-url";
+import { formatPricePreview, parsePrice } from "@/lib/price-parse";
 import type { TrackedItem } from "@/lib/types";
 
 interface Props {
@@ -51,9 +52,11 @@ function relativeTime(iso: string): string {
 }
 
 function AddForm({
+  items,
   onAdd,
   busy,
 }: {
+  items: TrackedItem[];
   onAdd: Props["onAdd"];
   busy: boolean;
 }) {
@@ -65,23 +68,47 @@ function AddForm({
 
   const parseResult = useMemo(() => parseForBadge(url), [url]);
 
-  const currency =
+  const currency: "EUR" | "USD" =
     parseResult.kind === "ok" && parseResult.region === "US" ? "USD" : "EUR";
+
+  const parsedPrice = useMemo(() => parsePrice(priceText), [priceText]);
+
+  // Auto-suggest the product name when the pasted URL's product code
+  // already exists in the store under another region. We only fill when
+  // the name field is currently empty, so the user's manual input is
+  // never clobbered.
+  const suggestedName = useMemo(() => {
+    if (parseResult.kind !== "ok") return null;
+    const match = items.find(
+      (it) => it.productCode === parseResult.productCode,
+    );
+    return match?.productName ?? null;
+  }, [parseResult, items]);
+
+  useEffect(() => {
+    if (!suggestedName) return;
+    // Functional setter: only fill if currently empty — this keeps the
+    // dependency array minimal (no productName dep needed) and avoids
+    // overwriting whatever the user has typed.
+    setProductName((current) =>
+      current.trim() === "" ? suggestedName : current,
+    );
+  }, [suggestedName]);
 
   const canSubmit =
     parseResult.kind === "ok" &&
     productName.trim().length > 0 &&
-    Number(priceText) > 0 &&
+    parsedPrice !== null &&
     !busy &&
     !submitting;
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    if (!canSubmit) return;
+    if (!canSubmit || parsedPrice === null) return;
     setSubmitting(true);
     setServerError(null);
     try {
-      await onAdd(url.trim(), productName.trim(), Number(priceText));
+      await onAdd(url.trim(), productName.trim(), parsedPrice);
       setUrl("");
       setProductName("");
       setPriceText("");
@@ -158,15 +185,25 @@ function AddForm({
           Price ({currency})
         </label>
         <input
-          type="number"
+          type="text"
+          inputMode="decimal"
           value={priceText}
           onChange={(e) => setPriceText(e.target.value)}
-          placeholder="0.00"
-          min={0}
-          step="0.01"
+          placeholder={currency === "EUR" ? "€1.190,00" : "$1,190.00"}
           className="w-full rounded border border-neutral-300 px-3 py-2 text-sm focus:border-neutral-500 focus:outline-none"
           aria-label="Price"
         />
+        {priceText.trim() !== "" && (
+          <p className="mt-1 text-xs text-neutral-500">
+            {parsedPrice !== null ? (
+              <>= {formatPricePreview(parsedPrice, currency)}</>
+            ) : (
+              <span className="text-red-600">
+                Could not parse that as a price
+              </span>
+            )}
+          </p>
+        )}
       </div>
 
       {serverError && (
@@ -197,12 +234,13 @@ function ItemRow({
   const [priceText, setPriceText] = useState(String(item.priceRaw));
   const [busy, setBusy] = useState(false);
 
+  const parsedEditPrice = useMemo(() => parsePrice(priceText), [priceText]);
+
   async function handleSave() {
-    const next = Number(priceText);
-    if (!Number.isFinite(next) || next <= 0) return;
+    if (parsedEditPrice === null) return;
     setBusy(true);
     try {
-      await onUpdate(item.id, { priceRaw: next });
+      await onUpdate(item.id, { priceRaw: parsedEditPrice });
       setEditing(false);
     } finally {
       setBusy(false);
@@ -242,18 +280,17 @@ function ItemRow({
         {editing ? (
           <>
             <input
-              type="number"
+              type="text"
+              inputMode="decimal"
               value={priceText}
-              min={0}
-              step="0.01"
               onChange={(e) => setPriceText(e.target.value)}
-              className="w-24 rounded border border-neutral-300 px-2 py-1 text-sm"
+              className="w-28 rounded border border-neutral-300 px-2 py-1 text-sm"
               aria-label="New price"
             />
             <span className="text-xs text-neutral-500">{item.currency}</span>
             <button
               onClick={handleSave}
-              disabled={busy}
+              disabled={busy || parsedEditPrice === null}
               className="rounded bg-neutral-900 px-2 py-1 text-xs font-medium text-white hover:bg-neutral-800 disabled:opacity-50"
             >
               Save
@@ -267,6 +304,14 @@ function ItemRow({
             >
               Cancel
             </button>
+            {priceText.trim() !== "" && parsedEditPrice === null && (
+              <span className="text-xs text-red-600">invalid</span>
+            )}
+            {parsedEditPrice !== null && parsedEditPrice !== item.priceRaw && (
+              <span className="text-xs text-neutral-500">
+                = {formatPricePreview(parsedEditPrice, item.currency)}
+              </span>
+            )}
           </>
         ) : (
           <>
@@ -309,7 +354,7 @@ export default function ShoppingListPanel({
     <section className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
       <h2 className="mb-3 text-lg font-semibold">Tracked items</h2>
 
-      <AddForm onAdd={onAdd} busy={busy} />
+      <AddForm items={items} onAdd={onAdd} busy={busy} />
 
       {items.length > 0 && (
         <>
