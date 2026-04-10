@@ -6,6 +6,7 @@ const SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS tracked_items (
     id             TEXT PRIMARY KEY,
     url            TEXT NOT NULL,
+    host           TEXT,
     product_code   TEXT NOT NULL,
     region         TEXT NOT NULL,
     source_country TEXT,
@@ -17,6 +18,8 @@ const SCHEMA_SQL = `
   );
   CREATE INDEX IF NOT EXISTS idx_tracked_items_product_code
     ON tracked_items(product_code);
+  CREATE INDEX IF NOT EXISTS idx_tracked_items_host_code
+    ON tracked_items(host, product_code);
 
   CREATE TABLE IF NOT EXISTS fx_cache (
     pair       TEXT PRIMARY KEY,
@@ -24,6 +27,45 @@ const SCHEMA_SQL = `
     fetched_at INTEGER NOT NULL
   );
 `;
+
+/**
+ * Idempotent migration for databases created before the `host` column
+ * existed. Adds the column if missing and backfills it from the URL
+ * field for existing rows.
+ */
+function ensureHostColumn(db: DatabaseType): void {
+  const columns = db
+    .prepare<[], { name: string }>("PRAGMA table_info(tracked_items)")
+    .all();
+  const hasHost = columns.some((c) => c.name === "host");
+  if (!hasHost) {
+    db.exec("ALTER TABLE tracked_items ADD COLUMN host TEXT");
+  }
+
+  const nullRows = db
+    .prepare<[], { id: string; url: string }>(
+      "SELECT id, url FROM tracked_items WHERE host IS NULL",
+    )
+    .all();
+  if (nullRows.length === 0) return;
+
+  const update = db.prepare(
+    "UPDATE tracked_items SET host = ? WHERE id = ?",
+  );
+  const runAll = db.transaction(
+    (rows: { id: string; url: string }[]) => {
+      for (const row of rows) {
+        try {
+          const host = new URL(row.url).hostname.toLowerCase();
+          update.run(host, row.id);
+        } catch {
+          // Unparseable URL — skip, leave host NULL.
+        }
+      }
+    },
+  );
+  runAll(nullRows);
+}
 
 let _db: DatabaseType | null = null;
 
@@ -40,6 +82,7 @@ export function getDb(): DatabaseType {
   const db = new Database(path);
   db.pragma("journal_mode = WAL");
   db.exec(SCHEMA_SQL);
+  ensureHostColumn(db);
   _db = db;
   return db;
 }

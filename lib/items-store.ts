@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { getDb } from "./db";
-import { parseRimowaUrl, RimowaUrlParseError } from "./rimowa-url";
+import { parseProductUrl, ProductUrlParseError } from "./product-url";
 import type {
   NewItemInput,
   TrackedItem,
@@ -10,6 +10,10 @@ import type {
 interface Row {
   id: string;
   url: string;
+  /** Nullable in the DB because pre-v5 rows didn't have it; the
+   * migration in `ensureHostColumn` backfills most of them, but any
+   * row with a malformed URL is left NULL. */
+  host: string | null;
   product_code: string;
   region: "EU" | "US";
   source_country: string | null;
@@ -20,10 +24,23 @@ interface Row {
   updated_at: number;
 }
 
+function hostFromUrl(url: string): string {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
 function rowToItem(row: Row): TrackedItem {
   return {
     id: row.id,
     url: row.url,
+    // Fall back to extracting from the URL if the migration left it NULL
+    // (should be rare — only for rows whose URL doesn't parse). This
+    // keeps downstream code from ever seeing an empty host for a
+    // well-formed row.
+    host: row.host ?? hostFromUrl(row.url),
     productCode: row.product_code,
     region: row.region,
     sourceCountry: row.source_country ?? undefined,
@@ -56,21 +73,21 @@ export function getItem(id: string): TrackedItem | null {
 /**
  * Create a new tracked item.
  *
- * The URL is parsed server-side so the client can't spoof region or
- * country. {@link RimowaUrlParseError} propagates to the caller (which
- * maps it to HTTP 400 in the route handler).
+ * The URL is parsed server-side so the client can't spoof region,
+ * country, or host. {@link ProductUrlParseError} propagates to the
+ * caller (which maps it to HTTP 400 in the route handler).
  */
 export function createItem(input: NewItemInput): TrackedItem {
   const productName = input.productName.trim();
   if (!productName) {
-    throw new RimowaUrlParseError("Product name is required");
+    throw new ProductUrlParseError("Product name is required");
   }
   if (!Number.isFinite(input.priceRaw) || input.priceRaw <= 0) {
-    throw new RimowaUrlParseError("Price must be a positive number");
+    throw new ProductUrlParseError("Price must be a positive number");
   }
 
-  // Throws RimowaUrlParseError on bad input.
-  const parsed = parseRimowaUrl(input.url);
+  // Throws ProductUrlParseError on bad input.
+  const parsed = parseProductUrl(input.url);
 
   const id = randomUUID();
   const currency = parsed.sourceRegion === "US" ? "USD" : "EUR";
@@ -79,13 +96,14 @@ export function createItem(input: NewItemInput): TrackedItem {
   getDb()
     .prepare(
       `INSERT INTO tracked_items(
-        id, url, product_code, region, source_country, eu_vat_rate,
+        id, url, host, product_code, region, source_country, eu_vat_rate,
         product_name, price_raw, currency, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
       input.url.trim(),
+      parsed.host,
       parsed.productCode,
       parsed.sourceRegion,
       parsed.sourceCountry ?? null,
@@ -118,10 +136,10 @@ export function updateItem(
     patch.priceRaw !== undefined ? patch.priceRaw : existing.priceRaw;
 
   if (!nextName) {
-    throw new RimowaUrlParseError("Product name cannot be empty");
+    throw new ProductUrlParseError("Product name cannot be empty");
   }
   if (!Number.isFinite(nextPrice) || nextPrice <= 0) {
-    throw new RimowaUrlParseError("Price must be a positive number");
+    throw new ProductUrlParseError("Price must be a positive number");
   }
 
   const now = Math.floor(Date.now() / 1000);

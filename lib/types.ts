@@ -16,11 +16,17 @@ export interface TrackedItem {
   id: string;
   /** The original URL the user pasted (kept clickable in the UI). */
   url: string;
-  /** 6–8 digit Rimowa product code, parsed from the URL. */
+  /** Hostname extracted from the URL (e.g. "www.rimowa.com"). */
+  host: string;
+  /**
+   * Product code extracted from the URL — a numeric SKU for Rimowa,
+   * an alphanumeric string for Moncler, etc. Used together with
+   * `host` to pair EU and US entries for the same product.
+   */
   productCode: string;
   /** Internal bucket (`"EU"` or `"US"`). */
   region: Region;
-  /** Country code from URLs like `/it/it/`; undefined for `/eu/...`. */
+  /** Country code from URLs like `/it/it/` or `/en-us/`; optional. */
   sourceCountry?: string;
   /** VAT rate from the country code (EU only); undefined for US. */
   euVatRate?: number;
@@ -83,6 +89,7 @@ export interface ItemAnalysis {
  * - `single_us` → only the US side exists
  */
 export interface ComparisonItem {
+  host: string;
   productCode: string;
   productName: string;
   eu?: TrackedItem;

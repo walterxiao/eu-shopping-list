@@ -6,6 +6,7 @@ function mk(partial: Partial<TrackedItem>): TrackedItem {
   return {
     id: partial.id ?? `id-${Math.random()}`,
     url: partial.url ?? "https://www.rimowa.com/eu/en/x/92552634.html",
+    host: partial.host ?? "www.rimowa.com",
     productCode: partial.productCode ?? "92552634",
     region: partial.region ?? "EU",
     sourceCountry: partial.sourceCountry,
@@ -152,6 +153,59 @@ describe("groupAndAnalyze", () => {
     const byCode = Object.fromEntries(res.map((r) => [r.productCode, r]));
     expect(byCode.A.status).toBe("ok");
     expect(byCode.B.status).toBe("single_eu");
+  });
+
+  it("does NOT pair items that share a product code across different hosts", () => {
+    // Regression guard: two brands that happen to use the same
+    // product code must show as two separate single-sided cards,
+    // not one wrongly-paired comparison.
+    const items = [
+      mk({
+        host: "www.rimowa.com",
+        productCode: "COLLISION",
+        region: "EU",
+        priceRaw: 1000,
+      }),
+      mk({
+        host: "www.moncler.com",
+        productCode: "COLLISION",
+        region: "US",
+        currency: "USD",
+        priceRaw: 1100,
+      }),
+    ];
+    const res = groupAndAnalyze(items, 0.92);
+    expect(res).toHaveLength(2);
+    // Both should be single-sided because the compound key
+    // (host, productCode) is different for each.
+    expect(res.every((i) => i.status !== "ok")).toBe(true);
+    const hosts = res.map((i) => i.host).sort();
+    expect(hosts).toEqual(["www.moncler.com", "www.rimowa.com"]);
+  });
+
+  it("pairs same host + same product code across EU/US correctly", () => {
+    const items = [
+      mk({
+        host: "www.moncler.com",
+        productCode: "L10911A001605968E742",
+        region: "EU",
+        sourceCountry: "it",
+        euVatRate: 0.22,
+        priceRaw: 1290,
+      }),
+      mk({
+        host: "www.moncler.com",
+        productCode: "L10911A001605968E742",
+        region: "US",
+        currency: "USD",
+        priceRaw: 1450,
+      }),
+    ];
+    const res = groupAndAnalyze(items, 0.92);
+    expect(res).toHaveLength(1);
+    expect(res[0].status).toBe("ok");
+    expect(res[0].host).toBe("www.moncler.com");
+    expect(res[0].analysis?.euVatRateApplied).toBe(0.22);
   });
 
   it("when two EU items share a product code, keeps the newer one", () => {

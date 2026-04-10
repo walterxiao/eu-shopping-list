@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { parseRimowaUrl, RimowaUrlParseError } from "@/lib/rimowa-url";
+import { parseProductUrl, ProductUrlParseError } from "@/lib/product-url";
 import { formatPricePreview, parsePrice } from "@/lib/price-parse";
 import type { TrackedItem } from "@/lib/types";
 
@@ -18,15 +18,23 @@ interface Props {
 
 type ParseResult =
   | { kind: "empty" }
-  | { kind: "ok"; productCode: string; region: "EU" | "US"; country?: string; vatRate?: number }
+  | {
+      kind: "ok";
+      host: string;
+      productCode: string;
+      region: "EU" | "US";
+      country?: string;
+      vatRate?: number;
+    }
   | { kind: "error"; reason: string };
 
 function parseForBadge(url: string): ParseResult {
   if (!url.trim()) return { kind: "empty" };
   try {
-    const p = parseRimowaUrl(url);
+    const p = parseProductUrl(url);
     return {
       kind: "ok",
+      host: p.host,
       productCode: p.productCode,
       region: p.sourceRegion,
       country: p.sourceCountry,
@@ -34,9 +42,13 @@ function parseForBadge(url: string): ParseResult {
     };
   } catch (err) {
     const reason =
-      err instanceof RimowaUrlParseError ? err.message : String(err);
+      err instanceof ProductUrlParseError ? err.message : String(err);
     return { kind: "error", reason };
   }
+}
+
+function shortHost(host: string): string {
+  return host.replace(/^www\./, "");
 }
 
 function relativeTime(iso: string): string {
@@ -73,14 +85,16 @@ function AddForm({
 
   const parsedPrice = useMemo(() => parsePrice(priceText), [priceText]);
 
-  // Auto-suggest the product name when the pasted URL's product code
-  // already exists in the store under another region. We only fill when
-  // the name field is currently empty, so the user's manual input is
-  // never clobbered.
+  // Auto-suggest the product name when the pasted URL's host +
+  // product-code combo already exists in the store (typically because
+  // the user just added the other region for the same product).
+  // Pairing by (host, productCode) avoids cross-brand collisions.
   const suggestedName = useMemo(() => {
     if (parseResult.kind !== "ok") return null;
     const match = items.find(
-      (it) => it.productCode === parseResult.productCode,
+      (it) =>
+        it.host === parseResult.host &&
+        it.productCode === parseResult.productCode,
     );
     return match?.productName ?? null;
   }, [parseResult, items]);
@@ -123,7 +137,7 @@ function AddForm({
     <form onSubmit={handleSubmit} className="space-y-3">
       <div>
         <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral-500">
-          Rimowa product URL
+          Product URL
         </label>
         <input
           type="url"
@@ -131,10 +145,13 @@ function AddForm({
           onChange={(e) => setUrl(e.target.value)}
           placeholder="https://www.rimowa.com/eu/en/.../92552634.html"
           className="w-full rounded border border-neutral-300 px-3 py-2 text-sm focus:border-neutral-500 focus:outline-none"
-          aria-label="Rimowa product URL"
+          aria-label="Product URL"
         />
         {parseResult.kind === "ok" && (
           <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+            <span className="rounded bg-blue-100 px-2 py-0.5 font-medium text-blue-800">
+              {shortHost(parseResult.host)}
+            </span>
             <span className="rounded bg-emerald-100 px-2 py-0.5 font-medium text-emerald-800">
               {parseResult.region}
             </span>
@@ -148,7 +165,10 @@ function AddForm({
                 {Math.round(parseResult.vatRate * 100)}% VAT
               </span>
             )}
-            <span className="rounded bg-neutral-100 px-2 py-0.5 font-mono text-neutral-700">
+            <span
+              className="truncate rounded bg-neutral-100 px-2 py-0.5 font-mono text-neutral-700"
+              title={parseResult.productCode}
+            >
               #{parseResult.productCode}
             </span>
             <a
@@ -260,6 +280,12 @@ function ItemRow({
   return (
     <li className="flex flex-col gap-1 py-2">
       <div className="flex items-center gap-2">
+        <span
+          className="truncate rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold text-blue-800"
+          title={item.host}
+        >
+          {shortHost(item.host)}
+        </span>
         <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-neutral-700">
           {item.region}
           {item.sourceCountry ? ` · ${item.sourceCountry.toUpperCase()}` : ""}

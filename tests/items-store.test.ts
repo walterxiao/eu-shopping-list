@@ -7,7 +7,7 @@ import {
   updateItem,
 } from "@/lib/items-store";
 import { resetDbForTest } from "@/lib/db";
-import { RimowaUrlParseError } from "@/lib/rimowa-url";
+import { ProductUrlParseError } from "@/lib/product-url";
 
 const EU_URL =
   "https://www.rimowa.com/eu/en/luggage/cabin/original-cabin/original-cabin-black/92552634.html";
@@ -17,6 +17,10 @@ const US_URL =
   "https://www.rimowa.com/us-en/luggage/cabin/original-cabin/original-cabin-black/92552634.html";
 const UK_URL =
   "https://www.rimowa.com/uk/en/luggage/cabin/92552634.html";
+const MONCLER_US_URL =
+  "https://www.moncler.com/en-us/men/outerwear/windbreakers-and-raincoats/etiache-hooded-rain-jacket-navy-blue-L10911A001605968E742.html";
+const MONCLER_IT_URL =
+  "https://www.moncler.com/it-it/men/outerwear/etiache-hooded-rain-jacket-L10911A001605968E742.html";
 
 describe("items-store", () => {
   beforeEach(() => {
@@ -36,6 +40,7 @@ describe("items-store", () => {
       priceRaw: 1350,
     });
     expect(item.id).toMatch(/[0-9a-f-]{36}/);
+    expect(item.host).toBe("www.rimowa.com");
     expect(item.productCode).toBe("92552634");
     expect(item.region).toBe("EU");
     expect(item.sourceCountry).toBeUndefined();
@@ -44,6 +49,32 @@ describe("items-store", () => {
     expect(item.priceRaw).toBe(1350);
     expect(item.productName).toBe("Original Cabin — Black");
     expect(item.updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it("creates a Moncler item with alphanumeric SKU and the right host", () => {
+    const item = createItem({
+      url: MONCLER_US_URL,
+      productName: "Etiache Hooded Rain Jacket — Navy Blue",
+      priceRaw: 1450,
+    });
+    expect(item.host).toBe("www.moncler.com");
+    expect(item.productCode).toBe("L10911A001605968E742");
+    expect(item.region).toBe("US");
+    expect(item.currency).toBe("USD");
+  });
+
+  it("creates the EU counterpart of a Moncler item (same SKU, IT locale)", () => {
+    const item = createItem({
+      url: MONCLER_IT_URL,
+      productName: "Etiache Hooded Rain Jacket — Navy Blue",
+      priceRaw: 1290,
+    });
+    expect(item.host).toBe("www.moncler.com");
+    expect(item.productCode).toBe("L10911A001605968E742");
+    expect(item.region).toBe("EU");
+    expect(item.sourceCountry).toBe("it");
+    expect(item.euVatRate).toBe(0.22);
+    expect(item.currency).toBe("EUR");
   });
 
   it("creates an Italian item with the correct per-country VAT rate", () => {
@@ -72,7 +103,7 @@ describe("items-store", () => {
   it("rejects a malformed URL", () => {
     expect(() =>
       createItem({ url: "not a url", productName: "x", priceRaw: 1 }),
-    ).toThrow(RimowaUrlParseError);
+    ).toThrow(ProductUrlParseError);
   });
 
   it("rejects a /uk/ URL with a GBP reason", () => {

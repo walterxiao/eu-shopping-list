@@ -11,9 +11,10 @@ export function LegalDisclaimerBanner() {
       <div className="mx-auto flex max-w-6xl items-start gap-3">
         <span className="font-semibold">Manual entry.</span>
         <span className="flex-1">
-          Prices are typed in by you after visiting rimowa.com yourself.
-          This app never fetches rimowa.com — it only does the currency
-          and VAT math. Not affiliated with Rimowa.
+          Prices are typed in by you after visiting each retailer&apos;s
+          website yourself. This app never fetches any retailer — it
+          only does the currency and VAT math. Not affiliated with any
+          brand.
         </span>
         <button
           onClick={() => setDismissed(true)}
@@ -31,9 +32,9 @@ export function LegalDisclaimerFooter() {
   return (
     <footer className="mt-12 border-t border-neutral-200 bg-white px-4 py-4 text-xs text-neutral-600">
       <div className="mx-auto max-w-6xl">
-        Prices are user-entered from your own manual visits to rimowa.com.
-        Customs duties, import VAT, warranty differences, and shipping
-        are not modeled. Not affiliated with any retailer.
+        Prices are user-entered from your own manual visits to each
+        retailer. Customs duties, import VAT, warranty differences, and
+        shipping are not modeled. Not affiliated with any retailer.
       </div>
     </footer>
   );

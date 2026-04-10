@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { deleteItem, updateItem } from "@/lib/items-store";
-import { RimowaUrlParseError } from "@/lib/rimowa-url";
+import { ProductUrlParseError } from "@/lib/product-url";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -46,7 +46,7 @@ export async function PATCH(
     }
     return NextResponse.json({ item });
   } catch (err) {
-    if (err instanceof RimowaUrlParseError) {
+    if (err instanceof ProductUrlParseError) {
       return NextResponse.json({ error: err.message }, { status: 400 });
     }
     throw err;

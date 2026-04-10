@@ -120,10 +120,10 @@ export default function ShoppingListApp() {
       <LegalDisclaimerBanner />
       <header className="border-b border-neutral-200 bg-white px-4 py-4">
         <div className="mx-auto max-w-6xl">
-          <h1 className="text-xl font-bold">Rimowa — EU vs US price check</h1>
+          <h1 className="text-xl font-bold">EU vs US price check</h1>
           <p className="text-sm text-neutral-600">
-            Track prices you&apos;ve seen on rimowa.com, compare US and EU
-            side-by-side with VAT normalization and live FX.
+            Track product prices you&apos;ve seen on any retailer, compare
+            US and EU side-by-side with VAT normalization and live FX.
           </p>
         </div>
       </header>

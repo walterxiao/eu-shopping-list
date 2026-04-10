@@ -24,8 +24,8 @@ function usd(n: number): string {
   }).format(n);
 }
 
-function regionLabel(r: Region): string {
-  return r === "EU" ? "EU (rimowa.com)" : "US (rimowa.com/us-en)";
+function shortHost(host: string): string {
+  return host.replace(/^www\./, "");
 }
 
 function SingleSideCard({ item }: { item: ComparisonItem }) {
@@ -71,8 +71,8 @@ function PairedCard({ item }: { item: ComparisonItem }) {
       <div className="grid grid-cols-2 gap-3 text-sm">
         {/* EU column */}
         <div className="rounded border border-neutral-200 p-3">
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
-            {regionLabel("EU")}
+          <p className="mb-2 truncate text-xs font-semibold uppercase tracking-wide text-neutral-500">
+            EU · {shortHost(eu.host)}
             {eu.sourceCountry ? ` · ${eu.sourceCountry.toUpperCase()}` : ""}
           </p>
           <div className={`mb-2 rounded p-2 ${cheaperRawClass("EU")}`}>
@@ -96,14 +96,14 @@ function PairedCard({ item }: { item: ComparisonItem }) {
             rel="noopener noreferrer"
             className="mt-2 block truncate text-xs text-blue-600 underline"
           >
-            View on rimowa.com
+            View on {shortHost(eu.host)}
           </a>
         </div>
 
         {/* US column */}
         <div className="rounded border border-neutral-200 p-3">
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
-            {regionLabel("US")}
+          <p className="mb-2 truncate text-xs font-semibold uppercase tracking-wide text-neutral-500">
+            US · {shortHost(us.host)}
           </p>
           <div className={`mb-2 rounded p-2 ${cheaperRawClass("US")}`}>
             <p className="text-xs text-neutral-600">
@@ -129,7 +129,7 @@ function PairedCard({ item }: { item: ComparisonItem }) {
             rel="noopener noreferrer"
             className="mt-2 block truncate text-xs text-blue-600 underline"
           >
-            View on rimowa.com/us-en
+            View on {shortHost(us.host)}
           </a>
         </div>
       </div>

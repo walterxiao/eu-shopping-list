@@ -64,8 +64,12 @@ function pickNewest(a: TrackedItem, b: TrackedItem): TrackedItem {
 }
 
 /**
- * Group tracked items by product code and, for each group, attach the
- * latest EU + US entries (if present) along with the computed analysis.
+ * Group tracked items by (host, productCode) and, for each group,
+ * attach the latest EU + US entries (if present) along with the
+ * computed analysis. Pairing is scoped to the same host because
+ * product codes from different brands live in different namespaces
+ * — a Rimowa "92552634" and a hypothetical Moncler "92552634" are
+ * not the same product.
  *
  * Pure function — no React, no side effects, no network. Deterministic
  * for the same `(items, fxRate)` input.
@@ -76,14 +80,15 @@ export function groupAndAnalyze(
 ): ComparisonItem[] {
   const groups = new Map<
     string,
-    { eu?: TrackedItem; us?: TrackedItem }
+    { host: string; productCode: string; eu?: TrackedItem; us?: TrackedItem }
   >();
 
   for (const item of items) {
-    let bucket = groups.get(item.productCode);
+    const key = `${item.host}\u0000${item.productCode}`;
+    let bucket = groups.get(key);
     if (!bucket) {
-      bucket = {};
-      groups.set(item.productCode, bucket);
+      bucket = { host: item.host, productCode: item.productCode };
+      groups.set(key, bucket);
     }
     if (item.region === "EU") {
       bucket.eu = bucket.eu ? pickNewest(bucket.eu, item) : item;
@@ -93,11 +98,12 @@ export function groupAndAnalyze(
   }
 
   const result: ComparisonItem[] = [];
-  for (const [productCode, { eu, us }] of groups) {
+  for (const { host, productCode, eu, us } of groups.values()) {
     const productName = eu?.productName ?? us?.productName ?? productCode;
 
     if (eu && us && fxRate != null) {
       result.push({
+        host,
         productCode,
         productName,
         eu,
@@ -108,11 +114,23 @@ export function groupAndAnalyze(
     } else if (eu && us) {
       // Paired but FX rate not available — still show the card with
       // raw prices, no analysis.
-      result.push({ productCode, productName, eu, us, status: "ok" });
+      result.push({ host, productCode, productName, eu, us, status: "ok" });
     } else if (eu) {
-      result.push({ productCode, productName, eu, status: "single_eu" });
+      result.push({
+        host,
+        productCode,
+        productName,
+        eu,
+        status: "single_eu",
+      });
     } else if (us) {
-      result.push({ productCode, productName, us, status: "single_us" });
+      result.push({
+        host,
+        productCode,
+        productName,
+        us,
+        status: "single_us",
+      });
     }
   }
 

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createItem, listItems } from "@/lib/items-store";
-import { RimowaUrlParseError } from "@/lib/rimowa-url";
+import { ProductUrlParseError } from "@/lib/product-url";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -39,7 +39,7 @@ export async function POST(request: Request) {
     const item = createItem(parsed.data);
     return NextResponse.json({ item }, { status: 201 });
   } catch (err) {
-    if (err instanceof RimowaUrlParseError) {
+    if (err instanceof ProductUrlParseError) {
       return NextResponse.json({ error: err.message }, { status: 400 });
     }
     throw err;
