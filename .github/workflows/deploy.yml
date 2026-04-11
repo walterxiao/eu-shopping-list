@@ -45,20 +45,40 @@ jobs:
           # Fail the workflow if any command in the block exits non-zero.
           script_stop: true
           # The remote script:
-          #   1. cd to the project dir (defaults to ~/eu-shopping-list)
-          #   2. Fetch + hard-reset to the deployed commit
-          #   3. Run the in-repo deploy-on-ec2.sh which does the
+          #   1. Resolve the project dir. We default to
+          #      $HOME/eu-shopping-list (NOT ~/eu-shopping-list —
+          #      tilde isn't expanded inside double-quoted strings
+          #      and the literal `~` would fail cd). If the user
+          #      passed EC2_PROJECT_DIR as a secret, we additionally
+          #      expand a leading `~` via bash parameter substitution
+          #      so either form is accepted.
+          #   2. Clone the repo with a short-lived github.token if
+          #      the directory doesn't exist yet — this makes the
+          #      very first deploy self-bootstrapping so the user
+          #      doesn't have to SSH in and git-clone manually.
+          #      `github.token` is injected per-run, works for both
+          #      public and private repos, and expires when the
+          #      workflow ends so the box never stores long-lived
+          #      credentials.
+          #   3. Fetch + hard-reset to the deployed commit.
+          #   4. Run the in-repo deploy-on-ec2.sh which does the
           #      actual install/build/pm2-reload/healthcheck.
-          #
-          # We do the git operations here (in the workflow YAML)
-          # rather than inside the script so the FIRST deploy works
-          # even when the script doesn't exist on the box yet — the
-          # git fetch+reset writes it into place before we exec it.
           script: |
             set -euo pipefail
-            cd "${{ secrets.EC2_PROJECT_DIR || '~/eu-shopping-list' }}"
+            PROJECT_DIR="${{ secrets.EC2_PROJECT_DIR || '$HOME/eu-shopping-list' }}"
+            # Expand a leading `~` if the user's secret started with one.
+            PROJECT_DIR="${PROJECT_DIR/#\~/$HOME}"
+            REPO_URL="https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+
+            if [ ! -d "$PROJECT_DIR/.git" ]; then
+              echo "==> cloning ${{ github.repository }} to $PROJECT_DIR (first deploy)"
+              mkdir -p "$(dirname "$PROJECT_DIR")"
+              git clone "$REPO_URL" "$PROJECT_DIR"
+            fi
+
+            cd "$PROJECT_DIR"
             echo "==> fetching ${{ github.sha }}"
-            git fetch origin main
+            git fetch "$REPO_URL" main
             git reset --hard ${{ github.sha }}
             chmod +x scripts/deploy-on-ec2.sh
             bash scripts/deploy-on-ec2.sh
