@@ -102,6 +102,26 @@ export function groupAndAnalyze(
 
     const prices = sorted.map((it) => priceForItem(it, fxRate));
 
+    // Attach a signed diff against the cheapest US row's net (the
+    // user's baseline for "where would I actually pay less?").
+    //   - US rows themselves get no diff (they ARE the baseline).
+    //   - If there's no US row with a finite net, no row gets a diff.
+    const usBaseline = prices
+      .filter((p) => p.item.region === "US" && Number.isFinite(p.netEur))
+      .reduce<
+        ItemPrice | undefined
+      >((best, p) => (best && best.netEur <= p.netEur ? best : p), undefined);
+    if (usBaseline && usBaseline.netEur > 0) {
+      for (const p of prices) {
+        if (p.item.region === "US") continue;
+        if (!Number.isFinite(p.netEur)) continue;
+        p.diffVsUsEur = round2(p.netEur - usBaseline.netEur);
+        p.diffVsUsPercent = round2(
+          ((p.netEur - usBaseline.netEur) / usBaseline.netEur) * 100,
+        );
+      }
+    }
+
     // Cheapest across every priced row where we actually have a
     // finite number (so USD items during an FX outage are excluded
     // from the winner selection but still shown in the card).

@@ -298,4 +298,130 @@ describe("groupAndAnalyze", () => {
     // Default refund 0.12 applied; salesTaxRate ignored.
     expect(eu.netEur).toBeCloseTo(880, 2);
   });
+
+  // ----- diffVsUs tests -----
+
+  it("attaches diffVsUsEur/Percent to non-US rows, scoped to the US baseline", () => {
+    // US: $1100 × 0.92 = €1012, × 1.0725 = €1085.37 (after tax)
+    // IT: €1000 × 0.88                      = €880    (after refund)
+    //   → diff = 880 - 1085.37 = -205.37 ≈ -18.9%
+    // DE: €1200 × 0.89                      = €1068.00
+    //   → diff = 1068 - 1085.37 = -17.37 ≈ -1.6%
+    const items = [
+      mk({
+        id: "it",
+        region: "EU",
+        sourceCountry: "it",
+        euRefundRate: 0.12,
+        priceRaw: 1000,
+      }),
+      mk({
+        id: "de",
+        region: "EU",
+        sourceCountry: "de",
+        euRefundRate: 0.11,
+        priceRaw: 1200,
+      }),
+      mk({
+        id: "us",
+        region: "US",
+        currency: "USD",
+        priceRaw: 1100,
+        salesTaxRate: 0.0725,
+      }),
+    ];
+    const res = groupAndAnalyze(items, 0.92);
+    const card = res[0];
+
+    const it = findRow(card, "it");
+    expect(it.diffVsUsEur).toBeCloseTo(-205.37, 1);
+    expect(it.diffVsUsPercent).toBeCloseTo(-18.92, 1);
+
+    const de = findRow(card, "de");
+    expect(de.diffVsUsEur).toBeCloseTo(-17.37, 1);
+    expect(de.diffVsUsPercent).toBeCloseTo(-1.6, 1);
+
+    // US row is the baseline — it gets no diff.
+    const us = findRow(card, "us");
+    expect(us.diffVsUsEur).toBeUndefined();
+    expect(us.diffVsUsPercent).toBeUndefined();
+  });
+
+  it("shows a positive diff when the EU row is more expensive than US after tax", () => {
+    const items = [
+      mk({
+        id: "it",
+        region: "EU",
+        sourceCountry: "it",
+        euRefundRate: 0.12,
+        priceRaw: 1500, // net 1320
+      }),
+      mk({
+        id: "us",
+        region: "US",
+        currency: "USD",
+        priceRaw: 1000,
+        salesTaxRate: 0, // net 920
+      }),
+    ];
+    const res = groupAndAnalyze(items, 0.92);
+    const it = findRow(res[0], "it");
+    // 1320 - 920 = +400
+    expect(it.diffVsUsEur).toBeCloseTo(400, 2);
+    expect(it.diffVsUsPercent).toBeGreaterThan(0);
+  });
+
+  it("leaves diffVsUsEur undefined on all rows when the card has no US row", () => {
+    const items = [
+      mk({ id: "it", region: "EU", sourceCountry: "it", euRefundRate: 0.12, priceRaw: 1000 }),
+      mk({ id: "de", region: "EU", sourceCountry: "de", euRefundRate: 0.11, priceRaw: 1000 }),
+    ];
+    const res = groupAndAnalyze(items, 0.92);
+    for (const p of res[0].prices) {
+      expect(p.diffVsUsEur).toBeUndefined();
+      expect(p.diffVsUsPercent).toBeUndefined();
+    }
+  });
+
+  it("leaves diffVsUs undefined when the only US row has NaN (FX missing)", () => {
+    const items = [
+      mk({ id: "eu", region: "EU", priceRaw: 1000 }),
+      mk({ id: "us", region: "US", currency: "USD", priceRaw: 1100 }),
+    ];
+    const res = groupAndAnalyze(items, null); // fxRate missing → US net is NaN
+    const eu = findRow(res[0], "eu");
+    expect(eu.diffVsUsEur).toBeUndefined();
+  });
+
+  it("picks the cheapest US row as the baseline when multiple US entries exist", () => {
+    // Two US entries for the same product (unusual but possible) —
+    // the cheaper one is the baseline all EU rows compare against.
+    const items = [
+      mk({
+        id: "us-cheap",
+        region: "US",
+        currency: "USD",
+        priceRaw: 1000,
+        salesTaxRate: 0, // net 920
+      }),
+      mk({
+        id: "us-spendy",
+        region: "US",
+        currency: "USD",
+        priceRaw: 1200,
+        salesTaxRate: 0, // net 1104
+      }),
+      mk({
+        id: "it",
+        region: "EU",
+        sourceCountry: "it",
+        euRefundRate: 0.12,
+        priceRaw: 1000, // net 880
+      }),
+    ];
+    const res = groupAndAnalyze(items, 0.92);
+    const it = findRow(res[0], "it");
+    // Baseline is the cheaper US (920), not the spendy one (1104)
+    expect(it.diffVsUsEur).toBeCloseTo(-40, 2);
+  });
 });

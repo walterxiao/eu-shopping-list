@@ -68,7 +68,8 @@ export interface UpdateItemInput {
 /**
  * One priced row inside a ComparisonItem. Carries the stored
  * {@link TrackedItem} plus its derived EUR representation (raw sticker
- * and net-after-refund) so the UI doesn't have to duplicate the math.
+ * and net-after-refund / net-after-tax) so the UI doesn't have to
+ * duplicate the math.
  */
 export interface ItemPrice {
   /** The underlying stored record. */
@@ -80,10 +81,9 @@ export interface ItemPrice {
    */
   rawEur: number;
   /**
-   * Net price (in EUR) that a non-EU tourist actually pays. For EU
-   * items this is `rawEur * (1 - euRefundRate)`; for US items it's
-   * the same as `rawEur` because there's no tourist refund. NaN if
-   * `rawEur` is NaN.
+   * Net price (in EUR) that a non-EU tourist actually pays, all-in.
+   * For EU items this is `rawEur * (1 - euRefundRate)`; for US items
+   * it's `rawEur * (1 + salesTaxRate)`. NaN if `rawEur` is NaN.
    */
   netEur: number;
   /**
@@ -92,6 +92,19 @@ export interface ItemPrice {
    * Undefined for EU items.
    */
   rawUsd?: number;
+  /**
+   * Signed difference between this row's `netEur` and the cheapest
+   * US row's `netEur` in the same card, in EUR. Negative = this row
+   * is cheaper than US after all adjustments. Undefined for US rows
+   * (they are the baseline) and for every row if the card has no
+   * finite-netEur US row.
+   */
+  diffVsUsEur?: number;
+  /**
+   * The same difference expressed as a percent of the US baseline.
+   * Undefined under the same conditions as `diffVsUsEur`.
+   */
+  diffVsUsPercent?: number;
 }
 
 /**

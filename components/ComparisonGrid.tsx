@@ -224,6 +224,29 @@ function PriceRow({
             after tax
           </div>
         )}
+        {!isUs && price.diffVsUsEur !== undefined && (
+          <div
+            className={`text-[11px] font-normal ${
+              price.diffVsUsEur < 0
+                ? "text-emerald-700"
+                : price.diffVsUsEur > 0
+                  ? "text-red-600"
+                  : "text-neutral-500"
+            }`}
+            title="Difference vs the cheapest US row's after-tax price"
+          >
+            {price.diffVsUsEur < 0 ? "−" : price.diffVsUsEur > 0 ? "+" : "±"}
+            {eur(Math.abs(price.diffVsUsEur))}
+            {price.diffVsUsPercent !== undefined && (
+              <>
+                {" "}
+                ({price.diffVsUsPercent < 0 ? "−" : "+"}
+                {Math.abs(price.diffVsUsPercent).toFixed(1)}%)
+              </>
+            )}{" "}
+            vs US
+          </div>
+        )}
       </td>
       <td className="px-3 py-2 text-xs text-neutral-500">
         {relativeTime(item.updatedAt)}
