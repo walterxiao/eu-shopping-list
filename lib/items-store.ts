@@ -18,6 +18,8 @@ interface Row {
   region: "EU" | "US";
   source_country: string | null;
   eu_refund_rate: number | null;
+  /** US sales tax rate (fraction); NULL for EU rows or unspecified. */
+  sales_tax_rate: number | null;
   product_name: string;
   price_raw: number;
   currency: "EUR" | "USD";
@@ -43,6 +45,7 @@ function rowToItem(row: Row): TrackedItem {
     region: row.region,
     sourceCountry: row.source_country ?? undefined,
     euRefundRate: row.eu_refund_rate ?? undefined,
+    salesTaxRate: row.sales_tax_rate ?? undefined,
     productName: row.product_name,
     priceRaw: row.price_raw,
     currency: row.currency,
@@ -83,20 +86,37 @@ export function createItem(input: NewItemInput): TrackedItem {
   if (!Number.isFinite(input.priceRaw) || input.priceRaw <= 0) {
     throw new ProductUrlParseError("Price must be a positive number");
   }
+  if (input.salesTaxRate !== undefined) {
+    if (!Number.isFinite(input.salesTaxRate) || input.salesTaxRate < 0) {
+      throw new ProductUrlParseError(
+        "Sales tax rate must be a non-negative number",
+      );
+    }
+    if (input.salesTaxRate > 1) {
+      throw new ProductUrlParseError(
+        "Sales tax rate must be a fraction (e.g. 0.0725 for 7.25%), not a percent",
+      );
+    }
+  }
 
   // Throws ProductUrlParseError on bad input.
   const parsed = parseProductUrl(input.url);
 
   const id = randomUUID();
   const currency = parsed.sourceRegion === "US" ? "USD" : "EUR";
+  // Sales tax only makes sense for US items; ignore the field for EU.
+  const salesTaxRate =
+    parsed.sourceRegion === "US"
+      ? (input.salesTaxRate ?? null)
+      : null;
   const now = Math.floor(Date.now() / 1000);
 
   getDb()
     .prepare(
       `INSERT INTO tracked_items(
         id, url, host, product_code, region, source_country, eu_refund_rate,
-        product_name, price_raw, currency, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        sales_tax_rate, product_name, price_raw, currency, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -106,6 +126,7 @@ export function createItem(input: NewItemInput): TrackedItem {
       parsed.sourceRegion,
       parsed.sourceCountry ?? null,
       parsed.euRefundRate ?? null,
+      salesTaxRate,
       productName,
       input.priceRaw,
       currency,
@@ -132,6 +153,11 @@ export function updateItem(
       : existing.productName;
   const nextPrice =
     patch.priceRaw !== undefined ? patch.priceRaw : existing.priceRaw;
+  // salesTaxRate only meaningful for US rows; ignore the field for EU.
+  const nextSalesTax =
+    existing.region === "US" && patch.salesTaxRate !== undefined
+      ? patch.salesTaxRate
+      : (existing.salesTaxRate ?? null);
 
   if (!nextName) {
     throw new ProductUrlParseError("Product name cannot be empty");
@@ -139,15 +165,27 @@ export function updateItem(
   if (!Number.isFinite(nextPrice) || nextPrice <= 0) {
     throw new ProductUrlParseError("Price must be a positive number");
   }
+  if (nextSalesTax !== null && nextSalesTax !== undefined) {
+    if (!Number.isFinite(nextSalesTax) || nextSalesTax < 0) {
+      throw new ProductUrlParseError(
+        "Sales tax rate must be a non-negative number",
+      );
+    }
+    if (nextSalesTax > 1) {
+      throw new ProductUrlParseError(
+        "Sales tax rate must be a fraction (e.g. 0.0725 for 7.25%), not a percent",
+      );
+    }
+  }
 
   const now = Math.floor(Date.now() / 1000);
   getDb()
     .prepare(
       `UPDATE tracked_items
-       SET product_name = ?, price_raw = ?, updated_at = ?
+       SET product_name = ?, price_raw = ?, sales_tax_rate = ?, updated_at = ?
        WHERE id = ?`,
     )
-    .run(nextName, nextPrice, now, id);
+    .run(nextName, nextPrice, nextSalesTax, now, id);
 
   return getItem(id);
 }

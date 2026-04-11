@@ -10,10 +10,17 @@ const PatchSchema = z
   .object({
     productName: z.string().trim().min(1).max(128).optional(),
     priceRaw: z.number().positive().max(1_000_000).optional(),
+    salesTaxRate: z.number().min(0).max(1).optional(),
   })
-  .refine((v) => v.productName !== undefined || v.priceRaw !== undefined, {
-    message: "At least one of productName or priceRaw is required",
-  });
+  .refine(
+    (v) =>
+      v.productName !== undefined ||
+      v.priceRaw !== undefined ||
+      v.salesTaxRate !== undefined,
+    {
+      message: "At least one of productName, priceRaw, salesTaxRate is required",
+    },
+  );
 
 export async function PATCH(
   request: Request,

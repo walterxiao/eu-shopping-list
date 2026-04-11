@@ -34,6 +34,12 @@ export interface TrackedItem {
    * claiming the refund at the airport. EU only; undefined for US.
    */
   euRefundRate?: number;
+  /**
+   * US sales tax rate ADDED on top of the sticker price at checkout.
+   * Stored as a fraction (e.g. 0.0725 for 7.25% California). US only;
+   * undefined for EU items. Defaults to 0 if the user didn't specify.
+   */
+  salesTaxRate?: number;
   /** User-entered display name. */
   productName: string;
   /** User-entered price in the region's native currency. */
@@ -48,12 +54,15 @@ export interface NewItemInput {
   url: string;
   productName: string;
   priceRaw: number;
+  /** Sales tax rate as a fraction (only meaningful for US URLs). */
+  salesTaxRate?: number;
 }
 
-/** Request body for PATCH /api/items/:id — both fields optional. */
+/** Request body for PATCH /api/items/:id — every field optional. */
 export interface UpdateItemInput {
   productName?: string;
   priceRaw?: number;
+  salesTaxRate?: number;
 }
 
 /**

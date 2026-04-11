@@ -11,6 +11,7 @@ function mk(partial: Partial<TrackedItem>): TrackedItem {
     region: partial.region ?? "EU",
     sourceCountry: partial.sourceCountry,
     euRefundRate: partial.euRefundRate,
+    salesTaxRate: partial.salesTaxRate,
     productName: partial.productName ?? "Original Cabin — Black",
     priceRaw: partial.priceRaw ?? 1350,
     currency: partial.currency ?? "EUR",
@@ -189,5 +190,112 @@ describe("groupAndAnalyze", () => {
     expect(itNet).toBeCloseTo(880, 2);
     expect(deNet).toBeCloseTo(890, 2);
     expect(itNet).toBeLessThan(deNet);
+  });
+
+  // ----- v7 sales-tax-on-US tests -----
+
+  it("US item with no sales tax: net === rawEur (back-compat default)", () => {
+    const items = [
+      mk({
+        id: "us",
+        region: "US",
+        currency: "USD",
+        priceRaw: 1000,
+        // salesTaxRate omitted → undefined → 0%
+      }),
+    ];
+    const res = groupAndAnalyze(items, 0.92);
+    const us = findRow(res[0], "us");
+    expect(us.rawEur).toBeCloseTo(920, 2);
+    expect(us.netEur).toBeCloseTo(920, 2);
+  });
+
+  it("US item with sales tax: net = rawEur × (1 + salesTaxRate)", () => {
+    const items = [
+      mk({
+        id: "us-ca",
+        region: "US",
+        currency: "USD",
+        priceRaw: 1000,
+        salesTaxRate: 0.0725, // 7.25% California rate
+      }),
+    ];
+    const res = groupAndAnalyze(items, 0.92);
+    const us = findRow(res[0], "us-ca");
+    expect(us.rawEur).toBeCloseTo(920, 2);
+    // 920 × 1.0725 = 986.70
+    expect(us.netEur).toBeCloseTo(986.7, 2);
+  });
+
+  it("compares EU after-refund vs US after-tax for the cheapest-net winner", () => {
+    // €1000 IT @ 12% refund → €880 net
+    // $1100 US @ 7.25% tax  → $1100 × 0.92 = €1012 → × 1.0725 = €1085.37
+    // EU should be the cheapest after refund/tax
+    const items = [
+      mk({
+        id: "it",
+        region: "EU",
+        sourceCountry: "it",
+        euRefundRate: 0.12,
+        priceRaw: 1000,
+      }),
+      mk({
+        id: "us",
+        region: "US",
+        currency: "USD",
+        priceRaw: 1100,
+        salesTaxRate: 0.0725,
+      }),
+    ];
+    const res = groupAndAnalyze(items, 0.92);
+    const card = res[0];
+    expect(findRow(card, "it").netEur).toBeCloseTo(880, 2);
+    expect(findRow(card, "us").netEur).toBeCloseTo(1085.37, 1);
+    expect(card.cheapestNetItemId).toBe("it");
+
+    // The "raw" (sticker) winner is also IT in this example because
+    // the US sticker converts to €1012 vs IT €1000.
+    expect(card.cheapestRawItemId).toBe("it");
+  });
+
+  it("a high US sales tax can flip the winner from US to EU", () => {
+    // EU net = 1000 × 0.88 = 880
+    // US net = 920 × 1.10 = 1012  → EU wins
+    // (vs without tax: US net would be 920 → US wins)
+    const items = [
+      mk({
+        id: "it",
+        region: "EU",
+        sourceCountry: "it",
+        euRefundRate: 0.12,
+        priceRaw: 1000,
+      }),
+      mk({
+        id: "us",
+        region: "US",
+        currency: "USD",
+        priceRaw: 1000,
+        salesTaxRate: 0.10, // 10% sales tax
+      }),
+    ];
+    const res = groupAndAnalyze(items, 0.92);
+    expect(res[0].cheapestNetItemId).toBe("it");
+  });
+
+  it("EU items ignore salesTaxRate even if accidentally set", () => {
+    const items = [
+      mk({
+        id: "eu",
+        region: "EU",
+        priceRaw: 1000,
+        // EU items don't use salesTaxRate; the field should have no
+        // effect on the math even if a malformed row carried it.
+        salesTaxRate: 0.99,
+      }),
+    ];
+    const res = groupAndAnalyze(items, 0.92);
+    const eu = findRow(res[0], "eu");
+    // Default refund 0.12 applied; salesTaxRate ignored.
+    expect(eu.netEur).toBeCloseTo(880, 2);
   });
 });

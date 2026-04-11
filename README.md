@@ -22,9 +22,12 @@ app handles:
   EU country so the "Net" column reflects what a non-EU visitor
   actually pays at the airport, not a theoretical pre-VAT wholesale
   price
+- Modeling the **US sales tax** that gets added at checkout (entered
+  per item; defaults to 0%) so US prices are compared at-checkout,
+  not as the pre-tax sticker shown on the website
 - Fetching and caching the USD→EUR rate from exchangerate.host (24 h)
-- Highlighting the cheapest region on both the raw-sticker and
-  after-refund axes
+- Picking the cheapest **after-refund / after-tax** row across the
+  whole card and highlighting it green
 
 ## Quick start (native)
 
@@ -59,14 +62,18 @@ container restarts.
 
 3. **Paste the URL** into the modal's URL field. Metadata badges
    appear immediately: host, region, country code, tourist refund
-   rate, product code. The modal also shows an "Open page ↗" link
-   in case you closed the retailer tab.
+   rate (EU only), product code. The modal also shows an "Open
+   page ↗" link in case you closed the retailer tab.
 
-4. **Read the price on the retailer's page** (the real sticker —
-   what you'd pay at the counter, including VAT in the EU).
+4. **Read the price on the retailer's page** (the sticker — what
+   the website displays. EU sites include VAT; US sites do not
+   include sales tax).
 
-5. **Type the product name and price**, click **Save item**. The
-   modal closes and a card appears on the right with your item.
+5. **Type the product name and price.** For **US** URLs, the modal
+   also shows a **Sales tax %** input — enter your delivery state's
+   rate (e.g. `7.25` for California, `8.875` for NYC, `0` if you're
+   shipping to a tax-free state like Oregon). It defaults to 0%.
+   Click **Save item**. The modal closes and a card appears.
 
 6. **Add more regions to the same product.** Scroll to the card and
    click **+ Add another region**. A small inline form appears
@@ -78,16 +85,27 @@ container restarts.
    DE + FR side-by-side on one card.
 
 7. **Read the comparison.** The card shows a table with one row per
-   stored region. Columns: region badge, sticker price (in native
-   currency, with EUR conversion for US), refund rate, net-in-EUR
-   after refund, last-updated timestamp, edit/delete buttons. The
-   cheapest-after-refund row is highlighted green, and a footer
-   line summarizes the winner.
+   stored region:
+
+   | Region | Sticker | Adj. | Net (EUR) | Updated |
+   |---|---|---|---|---|
+   | EU · IT | €1,190 | −12% refund | **€1,047.20** | just now |
+   | US     | $1,100 (≈ €1,012 pre-tax) | +7.25% tax | **€1,085.37** after tax | just now |
+
+   - **EU rows** show the sticker (incl. local VAT) and the Net
+     after subtracting the tourist refund.
+   - **US rows** show the USD sticker (with the EUR conversion
+     below as "pre-tax"), and the Net after **adding** the sales
+     tax you entered.
+   - The **cheapest Net** row across all regions is highlighted
+     green. That's the apples-to-apples winner — EU after refund
+     compared against US after sales tax.
 
 8. **Update prices as they change.** Click the stored URL to revisit
    the retailer (opens in a new tab). Read the new price, come back
-   to the app, click **Edit** on that row, type the new number,
-   click **Save**. The comparison updates instantly.
+   to the app, click **Edit** on that row. For US rows you can edit
+   both the sticker AND the sales tax % inline. Click **Save**. The
+   comparison updates instantly.
 
 ### Keyboard & UX notes
 
@@ -185,7 +203,7 @@ rate the server returned.
 
 ## Testing
 
-97 tests across five files:
+108 tests across five files:
 
 - `tests/product-url.test.ts` (38) — URL parsing: Rimowa (numeric
   SKU) and Moncler (alphanumeric SKU) happy paths, every Eurozone
@@ -196,17 +214,22 @@ rate the server returned.
   currency symbols, thousands separators, invalid input
 - `tests/fx.test.ts` (5) — FX fetcher with mocked HTTP: cache hits,
   stale fallback, hardcoded fallback, malformed payload
-- `tests/items-store.test.ts` (18) — in-memory CRUD + on-disk v4→v6
-  upgrade migration: EU metadata derivation, per-country refund
-  rate (IT 0.12), US currency, host field, Moncler alphanumeric
-  SKU, malformed URL rejection, GBP rejection, newest-first
-  ordering, migration: add host column, rename eu_vat_rate →
-  eu_refund_rate, rewrite 0.22 → 0.12, set user_version to 6
-- `tests/compute.test.ts` (10) — pure grouping function: empty
+- `tests/items-store.test.ts` (24) — in-memory CRUD + on-disk
+  v4→v7 upgrade migration: EU metadata derivation, per-country
+  refund rate (IT 0.12), US currency, host field, Moncler
+  alphanumeric SKU, malformed URL rejection, GBP rejection,
+  **salesTaxRate stored on US items / ignored on EU items**,
+  validation that sales tax must be a fraction 0..1, migration:
+  add host column, rename eu_vat_rate → eu_refund_rate, rewrite
+  0.22 → 0.12, **add sales_tax_rate column**, set user_version
+  to 7
+- `tests/compute.test.ts` (15) — pure grouping function: empty
   input, single-region card, paired EU + US with refund math,
   **3+ region comparison** (DE / IT / FR / US on one product),
   per-country refund rates, null FX rate (NaN-safe), cross-host
-  collision guard
+  collision guard, **US sales-tax math** (back-compat default 0%,
+  CA 7.25%, EU-vs-US after-refund-vs-after-tax winner selection,
+  high US sales tax can flip the winner from US to EU)
 
 ## Data persistence
 

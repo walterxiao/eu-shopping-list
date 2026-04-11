@@ -19,10 +19,15 @@ interface Props {
     url: string,
     productName: string,
     priceRaw: number,
+    salesTaxRate?: number,
   ) => Promise<void>;
   onUpdate: (
     id: string,
-    patch: { productName?: string; priceRaw?: number },
+    patch: {
+      productName?: string;
+      priceRaw?: number;
+      salesTaxRate?: number;
+    },
   ) => Promise<void>;
   onRemove: (id: string) => Promise<void>;
 }
@@ -79,17 +84,34 @@ function PriceRow({
   onRemove: Props["onRemove"];
 }) {
   const { item, rawEur, netEur, rawUsd } = price;
+  const isUs = item.region === "US";
   const [editing, setEditing] = useState(false);
   const [priceText, setPriceText] = useState(String(item.priceRaw));
+  /** Sales-tax percent string (e.g. "7.25"); only used for US rows. */
+  const [salesTaxText, setSalesTaxText] = useState(
+    item.salesTaxRate !== undefined ? String(item.salesTaxRate * 100) : "",
+  );
   const [busy, setBusy] = useState(false);
 
   const parsedEdit = useMemo(() => parsePrice(priceText), [priceText]);
+  const parsedSalesTax = useMemo<number | null>(() => {
+    if (!isUs) return null;
+    const trimmed = salesTaxText.trim();
+    if (trimmed === "") return 0;
+    const n = Number(trimmed.replace(",", "."));
+    if (!Number.isFinite(n) || n < 0 || n >= 100) return null;
+    return n / 100;
+  }, [isUs, salesTaxText]);
 
   async function handleSave() {
     if (parsedEdit === null) return;
+    if (isUs && parsedSalesTax === null) return;
     setBusy(true);
     try {
-      await onUpdate(item.id, { priceRaw: parsedEdit });
+      await onUpdate(item.id, {
+        priceRaw: parsedEdit,
+        ...(isUs ? { salesTaxRate: parsedSalesTax ?? 0 } : {}),
+      });
       setEditing(false);
     } finally {
       setBusy(false);
@@ -105,6 +127,26 @@ function PriceRow({
     } finally {
       setBusy(false);
     }
+  }
+
+  /**
+   * Right-column "Adjustment" cell: shows the signed delta between
+   * sticker and net for this row.
+   *   EU rows  → "−12% refund"
+   *   US rows  → "+8.25% tax" (or "+0% tax" / "—" if not specified)
+   */
+  function renderAdjustmentCell(): React.ReactNode {
+    if (isUs) {
+      const rate = item.salesTaxRate;
+      if (rate === undefined || rate === 0) {
+        return <span className="text-neutral-400">+0% tax</span>;
+      }
+      return `+${(rate * 100).toFixed(2)}% tax`;
+    }
+    if (item.euRefundRate !== undefined) {
+      return `−${Math.round(item.euRefundRate * 100)}% refund`;
+    }
+    return "—";
   }
 
   return (
@@ -138,7 +180,7 @@ function PriceRow({
               value={priceText}
               onChange={(e) => setPriceText(e.target.value)}
               className="w-24 rounded border border-neutral-300 px-2 py-1 text-sm"
-              aria-label="New price"
+              aria-label="New sticker price"
             />
             <span className="text-xs text-neutral-500">{item.currency}</span>
           </div>
@@ -147,16 +189,29 @@ function PriceRow({
             {item.currency === "USD" ? usd(item.priceRaw) : eur(item.priceRaw)}
             {rawUsd !== undefined && Number.isFinite(rawEur) && (
               <div className="text-[11px] text-neutral-500">
-                ≈ {eur(rawEur)}
+                ≈ {eur(rawEur)} pre-tax
               </div>
             )}
           </div>
         )}
       </td>
       <td className="px-3 py-2 text-xs text-neutral-600">
-        {item.euRefundRate !== undefined
-          ? `≈ ${Math.round(item.euRefundRate * 100)}%`
-          : "—"}
+        {editing && isUs ? (
+          <div className="flex items-center gap-1">
+            <input
+              type="text"
+              inputMode="decimal"
+              value={salesTaxText}
+              onChange={(e) => setSalesTaxText(e.target.value)}
+              placeholder="0"
+              className="w-14 rounded border border-neutral-300 px-2 py-1 text-xs"
+              aria-label="Sales tax percent"
+            />
+            <span>%</span>
+          </div>
+        ) : (
+          renderAdjustmentCell()
+        )}
       </td>
       <td
         className={`px-3 py-2 text-sm ${
@@ -164,33 +219,52 @@ function PriceRow({
         }`}
       >
         {eur(netEur)}
+        {isUs && Number.isFinite(netEur) && (
+          <div className="text-[11px] font-normal text-neutral-500">
+            after tax
+          </div>
+        )}
       </td>
       <td className="px-3 py-2 text-xs text-neutral-500">
         {relativeTime(item.updatedAt)}
       </td>
       <td className="px-3 py-2 text-right">
         {editing ? (
-          <div className="flex justify-end gap-1">
-            <button
-              onClick={handleSave}
-              disabled={busy || parsedEdit === null}
-              className="rounded bg-neutral-900 px-2 py-1 text-xs font-medium text-white hover:bg-neutral-800 disabled:opacity-50"
-            >
-              Save
-            </button>
-            <button
-              onClick={() => {
-                setEditing(false);
-                setPriceText(String(item.priceRaw));
-              }}
-              className="rounded px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-100"
-            >
-              Cancel
-            </button>
+          <div className="flex flex-col items-end gap-1">
+            <div className="flex gap-1">
+              <button
+                onClick={handleSave}
+                disabled={
+                  busy ||
+                  parsedEdit === null ||
+                  (isUs && parsedSalesTax === null)
+                }
+                className="rounded bg-neutral-900 px-2 py-1 text-xs font-medium text-white hover:bg-neutral-800 disabled:opacity-50"
+              >
+                Save
+              </button>
+              <button
+                onClick={() => {
+                  setEditing(false);
+                  setPriceText(String(item.priceRaw));
+                  setSalesTaxText(
+                    item.salesTaxRate !== undefined
+                      ? String(item.salesTaxRate * 100)
+                      : "",
+                  );
+                }}
+                className="rounded px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-100"
+              >
+                Cancel
+              </button>
+            </div>
             {priceText.trim() !== "" && parsedEdit !== null && (
-              <span className="self-center text-[11px] text-neutral-500">
+              <span className="text-[11px] text-neutral-500">
                 = {formatPricePreview(parsedEdit, item.currency)}
               </span>
+            )}
+            {isUs && parsedSalesTax === null && (
+              <span className="text-[11px] text-red-600">tax 0–100%</span>
             )}
           </div>
         ) : (
@@ -235,6 +309,7 @@ function AddAnotherRegionForm({
   const [expanded, setExpanded] = useState(false);
   const [url, setUrl] = useState("");
   const [priceText, setPriceText] = useState("");
+  const [salesTaxText, setSalesTaxText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -267,11 +342,21 @@ function AddAnotherRegionForm({
         it.region === parseResult.sourceRegion,
     );
 
-  const currency: "EUR" | "USD" =
-    parseResult && "sourceRegion" in parseResult && parseResult.sourceRegion === "US"
-      ? "USD"
-      : "EUR";
+  const isUs =
+    parseResult &&
+    "sourceRegion" in parseResult &&
+    parseResult.sourceRegion === "US";
+  const currency: "EUR" | "USD" = isUs ? "USD" : "EUR";
   const parsedPrice = useMemo(() => parsePrice(priceText), [priceText]);
+
+  const parsedSalesTax = useMemo<number | null>(() => {
+    if (!isUs) return null;
+    const trimmed = salesTaxText.trim();
+    if (trimmed === "") return 0;
+    const n = Number(trimmed.replace(",", "."));
+    if (!Number.isFinite(n) || n < 0 || n >= 100) return null;
+    return n / 100;
+  }, [isUs, salesTaxText]);
 
   const mismatchReason = !parseResult
     ? null
@@ -292,6 +377,7 @@ function AddAnotherRegionForm({
     codeMatches &&
     !alreadyExists &&
     parsedPrice !== null &&
+    (!isUs || parsedSalesTax !== null) &&
     !submitting;
 
   async function handleSubmit(e: FormEvent) {
@@ -300,9 +386,15 @@ function AddAnotherRegionForm({
     setSubmitting(true);
     setError(null);
     try {
-      await onAdd(url.trim(), card.productName, parsedPrice);
+      await onAdd(
+        url.trim(),
+        card.productName,
+        parsedPrice,
+        isUs ? (parsedSalesTax ?? 0) : undefined,
+      );
       setUrl("");
       setPriceText("");
+      setSalesTaxText("");
       setExpanded(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -337,6 +429,7 @@ function AddAnotherRegionForm({
             setExpanded(false);
             setUrl("");
             setPriceText("");
+            setSalesTaxText("");
             setError(null);
           }}
           className="text-xs text-neutral-400 hover:text-neutral-700"
@@ -352,7 +445,7 @@ function AddAnotherRegionForm({
         className="w-full rounded border border-neutral-300 px-2 py-1 text-xs focus:border-neutral-500 focus:outline-none"
         aria-label="URL for another region"
       />
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <input
           type="text"
           inputMode="decimal"
@@ -362,7 +455,23 @@ function AddAnotherRegionForm({
           className="w-28 rounded border border-neutral-300 px-2 py-1 text-xs focus:border-neutral-500 focus:outline-none"
           aria-label="Price"
         />
-        <span className="text-[11px] text-neutral-500">{currency}</span>
+        <span className="text-[11px] text-neutral-500">
+          {isUs ? "USD pre-tax" : currency}
+        </span>
+        {isUs && (
+          <>
+            <input
+              type="text"
+              inputMode="decimal"
+              value={salesTaxText}
+              onChange={(e) => setSalesTaxText(e.target.value)}
+              placeholder="0"
+              className="w-14 rounded border border-neutral-300 px-2 py-1 text-xs focus:border-neutral-500 focus:outline-none"
+              aria-label="Sales tax percent"
+            />
+            <span className="text-[11px] text-neutral-500">% tax</span>
+          </>
+        )}
         <button
           type="submit"
           disabled={!canSubmit}
@@ -373,6 +482,11 @@ function AddAnotherRegionForm({
       </div>
       {mismatchReason && (
         <p className="text-[11px] text-red-600">{mismatchReason}</p>
+      )}
+      {isUs && parsedSalesTax === null && salesTaxText.trim() !== "" && (
+        <p className="text-[11px] text-red-600">
+          Sales tax must be 0–100 (e.g. 7.25)
+        </p>
       )}
       {error && <p className="text-[11px] text-red-600">{error}</p>}
     </form>
@@ -417,8 +531,11 @@ function Card({
               <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
                 Sticker
               </th>
-              <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                Refund
+              <th
+                className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500"
+                title="EU rows: tourist VAT refund (subtracted from sticker). US rows: state sales tax (added to sticker)."
+              >
+                Adj.
               </th>
               <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-neutral-500">
                 Net (EUR)
@@ -536,12 +653,14 @@ export default function ComparisonGrid({
       )}
 
       <p className="text-xs text-neutral-500">
-        The &ldquo;Net (EUR)&rdquo; column is an approximation of what a
-        non-EU tourist actually pays after claiming a VAT refund at the
-        airport (Global Blue / Planet). Real refunds depend on the
-        operator, the refund method (card vs cash), and the purchase
-        amount — treat the number as directional. US rows show no
-        refund because there&apos;s no tourist tax refund in the US.
+        The <strong>Net (EUR)</strong> column is the apples-to-apples
+        comparison number. <strong>EU rows</strong>: sticker minus an
+        approximate Global Blue / Planet tourist refund (~10–17%
+        depending on country, varies by operator and purchase amount).
+        <strong> US rows</strong>: sticker plus the sales tax rate you
+        entered for that item (defaults to 0%). The cheapest-Net row is
+        highlighted green and is the right number to compare across
+        regions.
       </p>
     </section>
   );

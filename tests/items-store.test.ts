@@ -104,6 +104,66 @@ describe("items-store", () => {
     expect(item.currency).toBe("USD");
   });
 
+  it("stores salesTaxRate on a US item when provided", () => {
+    const item = createItem({
+      url: US_URL,
+      productName: "Original Cabin — Black",
+      priceRaw: 1300,
+      salesTaxRate: 0.0725,
+    });
+    expect(item.salesTaxRate).toBe(0.0725);
+    expect(getItem(item.id)?.salesTaxRate).toBe(0.0725);
+  });
+
+  it("ignores salesTaxRate on EU items even if provided", () => {
+    const item = createItem({
+      url: IT_URL,
+      productName: "Classic Cabin — Silver",
+      priceRaw: 1275,
+      // Caller mistakenly attached a sales tax rate to an EU item;
+      // the store drops it on the floor (EU items don't have sales
+      // tax, they have a VAT refund instead).
+      salesTaxRate: 0.0725,
+    });
+    expect(item.region).toBe("EU");
+    expect(item.salesTaxRate).toBeUndefined();
+  });
+
+  it("rejects a salesTaxRate larger than 1 (must be a fraction)", () => {
+    expect(() =>
+      createItem({
+        url: US_URL,
+        productName: "X",
+        priceRaw: 1,
+        salesTaxRate: 7.25, // user mistakenly passed 7.25 instead of 0.0725
+      }),
+    ).toThrow(/fraction/i);
+  });
+
+  it("rejects a negative salesTaxRate", () => {
+    expect(() =>
+      createItem({
+        url: US_URL,
+        productName: "X",
+        priceRaw: 1,
+        salesTaxRate: -0.01,
+      }),
+    ).toThrow(/non-negative/i);
+  });
+
+  it("updateItem can change a US item's salesTaxRate without touching price", () => {
+    const created = createItem({
+      url: US_URL,
+      productName: "X",
+      priceRaw: 1300,
+      salesTaxRate: 0,
+    });
+    const updated = updateItem(created.id, { salesTaxRate: 0.0825 });
+    expect(updated).not.toBeNull();
+    expect(updated!.salesTaxRate).toBe(0.0825);
+    expect(updated!.priceRaw).toBe(1300);
+  });
+
   it("rejects a malformed URL", () => {
     expect(() =>
       createItem({ url: "not a url", productName: "x", priceRaw: 1 }),
@@ -315,8 +375,8 @@ describe("items-store — v4 → v6 upgrade migration", () => {
     expect(legacy!.euRefundRate).toBe(0.12);
   });
 
-  it("sets user_version to 6 so the migration doesn't re-run", () => {
-    // Touch the DB once so the migration runs.
+  it("sets user_version to 7 (current schema) so migrations don't re-run", () => {
+    // Touch the DB once so the migration chain runs.
     listItems();
     // Open a read-only handle and check the pragma.
     const db = new Database(tmpPath, { readonly: true });
@@ -324,6 +384,21 @@ describe("items-store — v4 → v6 upgrade migration", () => {
       .prepare("PRAGMA user_version")
       .get() as { user_version: number };
     db.close();
-    expect(row.user_version).toBe(6);
+    expect(row.user_version).toBe(7);
+  });
+
+  it("v7 migration adds the sales_tax_rate column on upgrade", () => {
+    // Touch the DB once so the migration chain runs.
+    listItems();
+    const db = new Database(tmpPath, { readonly: true });
+    const cols = db
+      .prepare("PRAGMA table_info(tracked_items)")
+      .all() as { name: string }[];
+    db.close();
+    const names = cols.map((c) => c.name);
+    expect(names).toContain("sales_tax_rate");
+    // The eu_refund_rate column should also be present (renamed by v6).
+    expect(names).toContain("eu_refund_rate");
+    expect(names).not.toContain("eu_vat_rate");
   });
 });

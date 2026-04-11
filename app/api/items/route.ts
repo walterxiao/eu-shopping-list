@@ -10,6 +10,8 @@ const NewItemSchema = z.object({
   url: z.string().trim().min(1).max(2048),
   productName: z.string().trim().min(1).max(128),
   priceRaw: z.number().positive().max(1_000_000),
+  /** Fraction (0..1), only meaningful for US URLs; ignored for EU. */
+  salesTaxRate: z.number().min(0).max(1).optional(),
 });
 
 export async function GET() {

@@ -18,16 +18,29 @@ function round2(n: number): number {
 
 /**
  * Derive the EUR price representation for a single stored item given
- * the current FX rate. For EU items:
- *   - `rawEur` = priceRaw (already EUR)
- *   - `netEur` = rawEur * (1 - refundRate)
+ * the current FX rate.
+ *
+ * For EU items:
+ *   - `rawEur` = priceRaw (already EUR; sticker INCLUDES VAT)
+ *   - `netEur` = rawEur * (1 - euRefundRate)  ← what a non-EU tourist
+ *     actually pays after claiming the VAT refund at the airport
+ *
  * For US items:
- *   - `rawUsd` = priceRaw (USD sticker)
- *   - `rawEur` = rawUsd * fxRate
- *   - `netEur` = rawEur (no tourist VAT refund in the US)
+ *   - `rawUsd` = priceRaw (USD sticker; PRE-sales-tax in the US)
+ *   - `rawEur` = rawUsd * fxRate (sticker converted to EUR)
+ *   - `netEur` = rawEur * (1 + salesTaxRate)  ← what you actually
+ *     pay at checkout (sticker + your local sales tax). Defaults
+ *     to 0% sales tax if the user didn't specify, in which case
+ *     `netEur === rawEur`.
+ *
+ * The "Net (EUR)" column is the apples-to-apples comparison number:
+ * EU rows have it reduced by the tourist refund, US rows have it
+ * increased by sales tax. Picking the lowest `netEur` across the
+ * card answers "where do I actually pay the least, all-in?".
+ *
  * If fxRate is null and the item is USD, both rawEur and netEur are
- * NaN — the UI shows the raw USD number and a "FX unavailable"
- * indicator.
+ * NaN — the UI still shows the raw USD number but excludes the row
+ * from the cheapest-row comparison.
  */
 function priceForItem(
   item: TrackedItem,
@@ -36,8 +49,10 @@ function priceForItem(
   if (item.currency === "USD") {
     const rawUsd = item.priceRaw;
     const rawEur = fxRate != null ? round2(rawUsd * fxRate) : NaN;
-    // US has no tourist VAT refund; net === raw.
-    const netEur = rawEur;
+    const salesTaxRate = item.salesTaxRate ?? 0;
+    const netEur = Number.isFinite(rawEur)
+      ? round2(rawEur * (1 + salesTaxRate))
+      : NaN;
     return { item, rawEur, netEur, rawUsd };
   }
   // EU / EUR

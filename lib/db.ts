@@ -4,25 +4,26 @@ import { dirname } from "node:path";
 import { EUROZONE_REFUND_RATE } from "./product-url";
 
 /**
- * Application schema version written to PRAGMA user_version. Increment
- * on every schema change and add a corresponding block in
- * `runMigrations()` below so existing users upgrade smoothly.
+ * Application schema version written to PRAGMA user_version. Bump on
+ * every schema change and add a corresponding `if (version < N)` block
+ * in `runMigrations()` below so existing users upgrade smoothly.
  */
-const APP_SCHEMA_VERSION = 6;
+const APP_SCHEMA_VERSION = 7;
 
 const SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS tracked_items (
-    id             TEXT PRIMARY KEY,
-    url            TEXT NOT NULL,
-    host           TEXT,
-    product_code   TEXT NOT NULL,
-    region         TEXT NOT NULL,
-    source_country TEXT,
-    eu_refund_rate REAL,
-    product_name   TEXT NOT NULL,
-    price_raw      REAL NOT NULL,
-    currency       TEXT NOT NULL,
-    updated_at     INTEGER NOT NULL
+    id              TEXT PRIMARY KEY,
+    url             TEXT NOT NULL,
+    host            TEXT,
+    product_code    TEXT NOT NULL,
+    region          TEXT NOT NULL,
+    source_country  TEXT,
+    eu_refund_rate  REAL,
+    sales_tax_rate  REAL,
+    product_name    TEXT NOT NULL,
+    price_raw       REAL NOT NULL,
+    currency        TEXT NOT NULL,
+    updated_at      INTEGER NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_tracked_items_product_code
     ON tracked_items(product_code);
@@ -34,20 +35,25 @@ const SCHEMA_SQL = `
   );
 `;
 
+function getColumns(db: DatabaseType, table: string): string[] {
+  return db
+    .prepare<[], { name: string }>(`PRAGMA table_info(${table})`)
+    .all()
+    .map((c) => c.name);
+}
+
 /**
  * Add the `host` column (introduced in v5), create the host-aware
  * index that SCHEMA_SQL can't safely create on an upgrade, and
  * backfill any NULL host values from the stored `url` field.
  *
- * Idempotent: does nothing if the column already exists and no
- * rows have NULL host.
+ * Idempotent: does nothing if the column already exists and no rows
+ * have NULL host. Runs unconditionally on every getDb() call because
+ * it pre-dates the user_version migration scheme below.
  */
 function ensureHostColumn(db: DatabaseType): void {
-  const columns = db
-    .prepare<[], { name: string }>("PRAGMA table_info(tracked_items)")
-    .all();
-  const hasHost = columns.some((c) => c.name === "host");
-  if (!hasHost) {
+  const columns = getColumns(db, "tracked_items");
+  if (!columns.includes("host")) {
     db.exec("ALTER TABLE tracked_items ADD COLUMN host TEXT");
   }
 
@@ -82,70 +88,78 @@ function ensureHostColumn(db: DatabaseType): void {
 }
 
 /**
- * v6 migration: the column formerly known as `eu_vat_rate` now stores
- * an approximate tourist VAT-refund rate, not the country's actual
- * VAT rate. This migration:
- *
- *   1. Renames the column `eu_vat_rate` → `eu_refund_rate` on
- *      databases created before v6.
- *   2. Rewrites every EU row's value from the v5 VAT rate to the v6
- *      refund rate looked up from `EUROZONE_REFUND_RATE`, keyed by
- *      `source_country` (falls back to 0.12 for pan-EU rows with no
- *      country).
- *
- * Gated by `PRAGMA user_version` — runs exactly once per database.
+ * Walk the schema-version chain from whatever version this database
+ * is on up to APP_SCHEMA_VERSION. Each version block is gated and
+ * idempotent so the function can be re-entered safely on every
+ * startup. New migrations append a new `if (version < N)` block.
  */
-function runV6Migration(db: DatabaseType): void {
-  const userVersion =
-    (
-      db
-        .prepare<[], { user_version: number }>("PRAGMA user_version")
-        .get() ?? { user_version: 0 }
-    ).user_version;
-  if (userVersion >= 6) return;
+function runMigrations(db: DatabaseType): void {
+  let version = (
+    db
+      .prepare<[], { user_version: number }>("PRAGMA user_version")
+      .get() ?? { user_version: 0 }
+  ).user_version;
 
-  const columns = db
-    .prepare<[], { name: string }>("PRAGMA table_info(tracked_items)")
-    .all()
-    .map((c) => c.name);
+  // -------- v6: rename eu_vat_rate → eu_refund_rate + rewrite values --------
+  if (version < 6) {
+    const cols = getColumns(db, "tracked_items");
+    if (cols.includes("eu_vat_rate") && !cols.includes("eu_refund_rate")) {
+      db.exec(
+        "ALTER TABLE tracked_items RENAME COLUMN eu_vat_rate TO eu_refund_rate",
+      );
+    }
 
-  // 1) Column rename: only needed on DBs that pre-date v6.
-  if (columns.includes("eu_vat_rate") && !columns.includes("eu_refund_rate")) {
-    db.exec(
-      "ALTER TABLE tracked_items RENAME COLUMN eu_vat_rate TO eu_refund_rate",
-    );
+    // Rewrite every EU row's stored rate. The v5 DB stored VAT rates
+    // (0.22 for IT, 0.19 for DE, …) in this column; v6 stores refund
+    // rates (0.12 for IT, 0.11 for DE) instead.
+    const DEFAULT_EU_REFUND_RATE = 0.12;
+    const euRows = db
+      .prepare<[], { id: string; source_country: string | null }>(
+        "SELECT id, source_country FROM tracked_items WHERE region = 'EU'",
+      )
+      .all();
+    if (euRows.length > 0) {
+      const update = db.prepare(
+        "UPDATE tracked_items SET eu_refund_rate = ? WHERE id = ?",
+      );
+      const runAll = db.transaction(
+        (rows: { id: string; source_country: string | null }[]) => {
+          for (const row of rows) {
+            const rate =
+              (row.source_country
+                ? EUROZONE_REFUND_RATE[row.source_country]
+                : undefined) ?? DEFAULT_EU_REFUND_RATE;
+            update.run(rate, row.id);
+          }
+        },
+      );
+      runAll(euRows);
+    }
+
+    db.pragma("user_version = 6");
+    version = 6;
   }
 
-  // 2) Rewrite every EU row's stored rate. Even on a v5 DB that
-  //    already went through ensureHostColumn, the rate values are
-  //    v5 VAT rates (0.22 for IT, 0.19 for DE, …) and we need to
-  //    replace them with v6 refund rates (0.12 for IT, 0.11 for DE).
-  const DEFAULT_EU_REFUND_RATE = 0.12;
-  const euRows = db
-    .prepare<[], { id: string; source_country: string | null }>(
-      "SELECT id, source_country FROM tracked_items WHERE region = 'EU'",
-    )
-    .all();
-  if (euRows.length > 0) {
-    const update = db.prepare(
-      "UPDATE tracked_items SET eu_refund_rate = ? WHERE id = ?",
-    );
-    const runAll = db.transaction(
-      (rows: { id: string; source_country: string | null }[]) => {
-        for (const row of rows) {
-          const rate =
-            (row.source_country
-              ? EUROZONE_REFUND_RATE[row.source_country]
-              : undefined) ?? DEFAULT_EU_REFUND_RATE;
-          update.run(rate, row.id);
-        }
-      },
-    );
-    runAll(euRows);
+  // -------- v7: add sales_tax_rate column for US items --------
+  if (version < 7) {
+    const cols = getColumns(db, "tracked_items");
+    if (!cols.includes("sales_tax_rate")) {
+      db.exec(
+        "ALTER TABLE tracked_items ADD COLUMN sales_tax_rate REAL",
+      );
+    }
+    // No value rewrite needed: existing US rows get NULL, which the
+    // store maps to undefined and the compute layer treats as 0%.
+    db.pragma("user_version = 7");
+    version = 7;
   }
 
-  // 3) Mark the migration as done so it doesn't re-run on startup.
-  db.pragma(`user_version = ${APP_SCHEMA_VERSION}`);
+  // (Future migrations append here.)
+  if (version < APP_SCHEMA_VERSION) {
+    throw new Error(
+      `runMigrations is missing a block for version < ${APP_SCHEMA_VERSION}`,
+    );
+  }
 }
 
 let _db: DatabaseType | null = null;
@@ -164,7 +178,7 @@ export function getDb(): DatabaseType {
   db.pragma("journal_mode = WAL");
   db.exec(SCHEMA_SQL);
   ensureHostColumn(db);
-  runV6Migration(db);
+  runMigrations(db);
   _db = db;
   return db;
 }

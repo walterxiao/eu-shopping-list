@@ -63,11 +63,21 @@ export default function ShoppingListApp() {
   }, []);
 
   const onAdd = useCallback(
-    async (url: string, productName: string, priceRaw: number) => {
+    async (
+      url: string,
+      productName: string,
+      priceRaw: number,
+      salesTaxRate?: number,
+    ) => {
       const res = await fetch("/api/items", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, productName, priceRaw }),
+        body: JSON.stringify({
+          url,
+          productName,
+          priceRaw,
+          ...(salesTaxRate !== undefined ? { salesTaxRate } : {}),
+        }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -84,7 +94,11 @@ export default function ShoppingListApp() {
   const onUpdate = useCallback(
     async (
       id: string,
-      patch: { productName?: string; priceRaw?: number },
+      patch: {
+        productName?: string;
+        priceRaw?: number;
+        salesTaxRate?: number;
+      },
     ) => {
       const res = await fetch(`/api/items/${id}`, {
         method: "PATCH",

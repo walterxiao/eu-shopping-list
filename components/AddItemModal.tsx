@@ -19,6 +19,7 @@ interface Props {
     url: string,
     productName: string,
     priceRaw: number,
+    salesTaxRate?: number,
   ) => Promise<void>;
 }
 
@@ -61,6 +62,8 @@ export default function AddItemModal({ open, onClose, items, onAdd }: Props) {
   const [url, setUrl] = useState("");
   const [productName, setProductName] = useState("");
   const [priceText, setPriceText] = useState("");
+  /** Percent string entered by the user, e.g. "8.25". Empty = 0%. */
+  const [salesTaxText, setSalesTaxText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
 
@@ -72,6 +75,7 @@ export default function AddItemModal({ open, onClose, items, onAdd }: Props) {
       setUrl("");
       setProductName("");
       setPriceText("");
+      setSalesTaxText("");
       setServerError(null);
       setSubmitting(false);
     }
@@ -88,9 +92,22 @@ export default function AddItemModal({ open, onClose, items, onAdd }: Props) {
   }, [open, onClose]);
 
   const parseResult = useMemo(() => parseForBadge(url), [url]);
-  const currency: "EUR" | "USD" =
-    parseResult.kind === "ok" && parseResult.region === "US" ? "USD" : "EUR";
+  const isUs = parseResult.kind === "ok" && parseResult.region === "US";
+  const currency: "EUR" | "USD" = isUs ? "USD" : "EUR";
   const parsedPrice = useMemo(() => parsePrice(priceText), [priceText]);
+
+  /**
+   * Parse the user's percent string ("8.25") into a fraction (0.0825).
+   * Empty / whitespace → 0%. Returns null on garbage so we can show
+   * an inline error.
+   */
+  const parsedSalesTaxFraction = useMemo<number | null>(() => {
+    const trimmed = salesTaxText.trim();
+    if (trimmed === "") return 0;
+    const n = Number(trimmed.replace(",", "."));
+    if (!Number.isFinite(n) || n < 0 || n >= 100) return null;
+    return n / 100;
+  }, [salesTaxText]);
 
   // Auto-suggest the product name when the pasted URL's (host, code)
   // already exists in the store (typically the user is adding the
@@ -116,6 +133,7 @@ export default function AddItemModal({ open, onClose, items, onAdd }: Props) {
     parseResult.kind === "ok" &&
     productName.trim().length > 0 &&
     parsedPrice !== null &&
+    parsedSalesTaxFraction !== null &&
     !submitting;
 
   async function handleSubmit(e: FormEvent) {
@@ -124,7 +142,14 @@ export default function AddItemModal({ open, onClose, items, onAdd }: Props) {
     setSubmitting(true);
     setServerError(null);
     try {
-      await onAdd(url.trim(), productName.trim(), parsedPrice);
+      await onAdd(
+        url.trim(),
+        productName.trim(),
+        parsedPrice,
+        // Only send the sales tax for US URLs; the server ignores it
+        // for EU but no point round-tripping zero noise.
+        isUs ? (parsedSalesTaxFraction ?? 0) : undefined,
+      );
       onClose();
     } catch (err) {
       setServerError(err instanceof Error ? err.message : String(err));
@@ -236,7 +261,7 @@ export default function AddItemModal({ open, onClose, items, onAdd }: Props) {
 
           <div>
             <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral-500">
-              Price ({currency})
+              {isUs ? "Sticker (USD, pre-tax)" : `Price (${currency})`}
             </label>
             <input
               type="text"
@@ -259,6 +284,43 @@ export default function AddItemModal({ open, onClose, items, onAdd }: Props) {
               </p>
             )}
           </div>
+
+          {isUs && (
+            <div>
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                Sales tax % (your delivery state)
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={salesTaxText}
+                  onChange={(e) => setSalesTaxText(e.target.value)}
+                  placeholder="0"
+                  className="w-24 rounded border border-neutral-300 px-3 py-2 text-sm focus:border-neutral-500 focus:outline-none"
+                  aria-label="Sales tax percent"
+                />
+                <span className="text-sm text-neutral-500">%</span>
+                {parsedSalesTaxFraction === null ? (
+                  <span className="text-xs text-red-600">
+                    Enter a number 0–100 (try 7.25)
+                  </span>
+                ) : parsedPrice !== null && parsedSalesTaxFraction > 0 ? (
+                  <span className="text-xs text-neutral-500">
+                    after-tax ≈{" "}
+                    {formatPricePreview(
+                      parsedPrice * (1 + parsedSalesTaxFraction),
+                      "USD",
+                    )}
+                  </span>
+                ) : (
+                  <span className="text-xs text-neutral-500">
+                    Defaults to 0% (no sales tax)
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
 
           {serverError && (
             <p className="text-xs text-red-600">{serverError}</p>
