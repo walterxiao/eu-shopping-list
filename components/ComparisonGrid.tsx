@@ -791,6 +791,8 @@ function Card({
   onUpdate: Props["onUpdate"];
   onRemove: Props["onRemove"];
 }) {
+  const [collapsed, setCollapsed] = useState(false);
+
   const cheapestNet = card.prices.find(
     (p) => p.item.id === card.cheapestNetItemId,
   );
@@ -803,9 +805,22 @@ function Card({
     new Set(card.prices.map((p) => p.item.productCode)),
   );
 
+  // When collapsed, show only the cheapest-net row. On single-row
+  // cards there's nothing to collapse and we don't render the
+  // toggle. Fallback to the first row if cheapestNet is undefined
+  // (can happen when every row has NaN netEur — e.g. FX fetch
+  // failed and every row is non-EUR).
+  const canCollapse = card.prices.length > 1;
+  const visiblePrices =
+    canCollapse && collapsed
+      ? cheapestNet
+        ? [cheapestNet]
+        : [card.prices[0]]
+      : card.prices;
+
   return (
     <article className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
-      <header className="mb-3 flex items-baseline justify-between gap-2">
+      <header className="mb-3 flex items-start justify-between gap-2">
         <div>
           <h3 className="text-lg font-semibold">{card.productName}</h3>
           <p className="text-xs text-neutral-500">
@@ -820,8 +835,28 @@ function Card({
                 {uniqueCodes.length} variants
               </>
             )}
+            {canCollapse && collapsed && cheapestNet && (
+              <>
+                {" · "}
+                <span className="text-neutral-600">
+                  showing cheapest ({regionLabel(cheapestNet)}) of{" "}
+                  {card.prices.length} regions
+                </span>
+              </>
+            )}
           </p>
         </div>
+        {canCollapse && (
+          <button
+            type="button"
+            onClick={() => setCollapsed((c) => !c)}
+            aria-expanded={!collapsed}
+            aria-label={collapsed ? "Expand all regions" : "Collapse to cheapest"}
+            className="shrink-0 rounded border border-neutral-200 px-2 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-50"
+          >
+            {collapsed ? "▸ Expand" : "▾ Collapse"}
+          </button>
+        )}
       </header>
 
       <div className="overflow-x-auto">
@@ -850,7 +885,7 @@ function Card({
             </tr>
           </thead>
           <tbody>
-            {card.prices.map((price) => (
+            {visiblePrices.map((price) => (
               <PriceRow
                 key={price.item.id}
                 price={price}
@@ -864,7 +899,7 @@ function Card({
         </table>
       </div>
 
-      {cheapestNet && card.prices.length > 1 && (
+      {cheapestNet && card.prices.length > 1 && !collapsed && (
         <p className="mt-3 text-sm">
           <span className="font-medium">Cheapest after refund:</span>{" "}
           <span className="font-semibold text-emerald-700">
