@@ -121,13 +121,40 @@ function priceForItem(
  * Pure function — no React, no side effects, no network. Deterministic
  * for the same `(items, fxRate)` input.
  */
+/**
+ * Normalize a product name for use as a grouping key. Lowercases,
+ * trims, and collapses internal whitespace so "Classic Cabin  ",
+ * "classic cabin", and "CLASSIC CABIN" all resolve to the same
+ * bucket. If the name is empty (shouldn't happen — the API requires
+ * it — but be safe), returns an empty string and the caller falls
+ * back to productCode.
+ */
+function normalizeNameKey(name: string): string {
+  return name.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
 export function groupAndAnalyze(
   items: TrackedItem[],
   fx: FxRatesSnapshot | null,
 ): ComparisonItem[] {
+  // Grouping key is (host, normalized product name), NOT (host,
+  // productCode). This lets color variants of the same product —
+  // e.g. Rimowa Classic Cabin silver (97353004) and black
+  // (97353005), both named "Classic Cabin" by the user — share
+  // one comparison card even though their SKUs differ. Items
+  // still group by code indirectly because the AddItem modal
+  // auto-suggests the stored name whenever the (host, productCode)
+  // matches, so same-code items in different regions get the same
+  // name typed into them and end up in the same bucket.
+  //
+  // Host is included in the key so a code or name collision
+  // between two brands (rimowa.com "Classic Cabin" vs a different
+  // site's "Classic Cabin") doesn't incorrectly merge them.
   const groups = new Map<string, TrackedItem[]>();
   for (const item of items) {
-    const key = `${item.host}\u0000${item.productCode}`;
+    const nameKey = normalizeNameKey(item.productName);
+    const fallback = nameKey || item.productCode;
+    const key = `${item.host}\u0000${fallback}`;
     const existing = groups.get(key);
     if (existing) {
       existing.push(item);

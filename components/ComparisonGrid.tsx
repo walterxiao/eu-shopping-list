@@ -527,10 +527,11 @@ function AddAnotherRegionForm({
 
   const hostMatches =
     parseResult && "host" in parseResult && parseResult.host === card.host;
-  const codeMatches =
-    parseResult &&
-    "productCode" in parseResult &&
-    parseResult.productCode === card.productCode;
+  // v9: codeMatches is no longer a hard requirement — the user
+  // can paste a different color (different productCode) and the
+  // new row will still group on the card because grouping is by
+  // (host, productName) now, and this form pre-fills the card's
+  // name. We still block exact duplicates below.
   const alreadyExists =
     parseResult &&
     "host" in parseResult &&
@@ -594,17 +595,14 @@ function AddAnotherRegionForm({
       ? parseResult.error
       : !hostMatches
         ? `URL host (${parseResult.host}) doesn't match this card (${card.host})`
-        : !codeMatches
-          ? `URL product code (${parseResult.productCode}) doesn't match this card (${card.productCode})`
-          : alreadyExists
-            ? "An entry for that region already exists — edit it instead"
-            : null;
+        : alreadyExists
+          ? "An entry for that exact SKU + region already exists — edit it instead"
+          : null;
 
   const canSubmit =
     parseResult &&
     "host" in parseResult &&
     hostMatches &&
-    codeMatches &&
     !alreadyExists &&
     parsedPrice !== null &&
     (!isUs || parsedSalesTax !== null) &&
@@ -797,13 +795,31 @@ function Card({
     (p) => p.item.id === card.cheapestNetItemId,
   );
 
+  // Distinct product codes in the card — may be more than one if
+  // color variants are grouped together (same name, different SKUs).
+  // Shown as a compact list under the header so the user can still
+  // see which codes are represented.
+  const uniqueCodes = Array.from(
+    new Set(card.prices.map((p) => p.item.productCode)),
+  );
+
   return (
     <article className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
       <header className="mb-3 flex items-baseline justify-between gap-2">
         <div>
           <h3 className="text-lg font-semibold">{card.productName}</h3>
           <p className="text-xs text-neutral-500">
-            {shortHost(card.host)} · #{card.productCode}
+            {shortHost(card.host)}
+            {uniqueCodes.length === 1 ? (
+              <>
+                {" · "}#{uniqueCodes[0]}
+              </>
+            ) : (
+              <>
+                {" · "}
+                {uniqueCodes.length} variants
+              </>
+            )}
           </p>
         </div>
       </header>
@@ -928,7 +944,7 @@ export default function ComparisonGrid({
         <div className="space-y-3">
           {items.map((card) => (
             <Card
-              key={`${card.host}-${card.productCode}`}
+              key={`${card.host}-${card.productName}`}
               card={card}
               allItems={flatItems}
               onAdd={onAdd}

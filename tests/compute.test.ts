@@ -129,15 +129,100 @@ describe("groupAndAnalyze", () => {
   });
 
   it("groups multiple unrelated products into separate cards", () => {
+    // Different product names → different cards, even though the
+    // default mk() host is shared. With the v9 name-based grouping
+    // we MUST give the two products distinct names; otherwise
+    // they'd merge into a single card by name.
     const items = [
-      mk({ id: "a-eu", productCode: "A", region: "EU", priceRaw: 1000 }),
-      mk({ id: "a-us", productCode: "A", region: "US", currency: "USD", priceRaw: 900 }),
-      mk({ id: "b-eu", productCode: "B", region: "EU", priceRaw: 2000 }),
-      mk({ id: "b-us", productCode: "B", region: "US", currency: "USD", priceRaw: 1800 }),
+      mk({ id: "a-eu", productCode: "A", productName: "Cabin Alpha", region: "EU", priceRaw: 1000 }),
+      mk({ id: "a-us", productCode: "A", productName: "Cabin Alpha", region: "US", currency: "USD", priceRaw: 900 }),
+      mk({ id: "b-eu", productCode: "B", productName: "Cabin Beta", region: "EU", priceRaw: 2000 }),
+      mk({ id: "b-us", productCode: "B", productName: "Cabin Beta", region: "US", currency: "USD", priceRaw: 1800 }),
     ];
     const res = groupAndAnalyze(items, FX);
     expect(res).toHaveLength(2);
     expect(res.every((c) => c.prices.length === 2)).toBe(true);
+  });
+
+  it("groups color variants with the same name into one card (v9)", () => {
+    // Different product codes — they're different colors of the
+    // Rimowa Classic Cabin — but the user typed the same name for
+    // both, so they should end up on the same card. This is the
+    // v9 "same name = same product" grouping behavior.
+    const items = [
+      mk({
+        id: "silver-eu",
+        host: "www.rimowa.com",
+        productCode: "97353004",
+        productName: "Classic Cabin",
+        region: "EU",
+        sourceCountry: "it",
+        euRefundRate: 0.12,
+        priceRaw: 1275,
+      }),
+      mk({
+        id: "black-eu",
+        host: "www.rimowa.com",
+        productCode: "97353005",
+        productName: "Classic Cabin",
+        region: "EU",
+        sourceCountry: "it",
+        euRefundRate: 0.12,
+        priceRaw: 1275,
+      }),
+      mk({
+        id: "silver-us",
+        host: "www.rimowa.com",
+        productCode: "97353004",
+        productName: "Classic Cabin",
+        region: "US",
+        currency: "USD",
+        priceRaw: 1200,
+      }),
+    ];
+    const res = groupAndAnalyze(items, FX);
+    expect(res).toHaveLength(1);
+    expect(res[0].prices).toHaveLength(3);
+    // All three rows are on the card, regardless of differing codes.
+    const ids = res[0].prices.map((p) => p.item.id).sort();
+    expect(ids).toEqual(["black-eu", "silver-eu", "silver-us"]);
+  });
+
+  it("is case-insensitive and whitespace-insensitive for the name key", () => {
+    // "Classic Cabin", "classic cabin", and "CLASSIC  CABIN  "
+    // (extra/weird whitespace + mixed case) should all collapse
+    // to the same bucket.
+    const items = [
+      mk({ id: "a", productName: "Classic Cabin", productCode: "X1" }),
+      mk({ id: "b", productName: "classic cabin", productCode: "X2" }),
+      mk({ id: "c", productName: "  CLASSIC   CABIN  ", productCode: "X3" }),
+    ];
+    const res = groupAndAnalyze(items, FX);
+    expect(res).toHaveLength(1);
+    expect(res[0].prices).toHaveLength(3);
+  });
+
+  it("splits items with the same code but different names (rename escape hatch)", () => {
+    // If the user deliberately renames one item to separate it
+    // from another that shares its productCode, the split should
+    // actually take effect — names win over codes.
+    const items = [
+      mk({
+        id: "silver",
+        host: "www.rimowa.com",
+        productCode: "X",
+        productName: "Classic Cabin Silver",
+      }),
+      mk({
+        id: "gold",
+        host: "www.rimowa.com",
+        productCode: "X",
+        productName: "Classic Cabin Gold",
+      }),
+    ];
+    const res = groupAndAnalyze(items, FX);
+    // Two cards — the user explicitly separated them by name.
+    expect(res).toHaveLength(2);
   });
 
   it("does NOT pair items that share a product code across different hosts", () => {
