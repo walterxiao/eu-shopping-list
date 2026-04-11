@@ -5,6 +5,7 @@ import {
   DEFAULT_EU_REFUND_RATE,
   DEFAULT_US_SALES_TAX_RATE,
 } from "@/lib/compute";
+import { fetchPriceFromUrl } from "@/lib/fetch-price-client";
 import { parseProductUrl, ProductUrlParseError } from "@/lib/product-url";
 import { formatPricePreview, parsePrice } from "@/lib/price-parse";
 import type {
@@ -113,6 +114,15 @@ function PriceRow({
   const isUs = item.region === "US";
   const isEu = item.region === "EU";
   const [editing, setEditing] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  /**
+   * Inline error from a failed "Refresh from page" attempt — shown
+   * below the action buttons until the user dismisses it (or starts
+   * editing the row, which clears it). Possible reasons: bot block,
+   * no price found, or extracted currency doesn't match this row's
+   * region.
+   */
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   const [priceText, setPriceText] = useState(String(item.priceRaw));
   /**
    * Sales-tax percent string (e.g. "7.25"); only used for US rows.
@@ -173,6 +183,34 @@ function PriceRow({
       await onRemove(item.id);
     } finally {
       setBusy(false);
+    }
+  }
+
+  /**
+   * "Refresh" button: fetch the current sticker price from the
+   * retailer page and PATCH this row's `priceRaw`. Rejects when the
+   * extracted currency doesn't match the row's region (e.g. an EU
+   * URL that returns USD JSON-LD) — that almost certainly means the
+   * site served us a default-region snapshot rather than the
+   * country-specific page, and silently storing it would corrupt
+   * the comparison.
+   */
+  async function handleRefresh() {
+    setRefreshing(true);
+    setRefreshError(null);
+    try {
+      const fetched = await fetchPriceFromUrl(item.url);
+      const expected = item.currency;
+      if (fetched.currency !== expected) {
+        throw new Error(
+          `Page returned ${fetched.currency}, this row is ${expected} — refusing to overwrite`,
+        );
+      }
+      await onUpdate(item.id, { priceRaw: fetched.priceRaw });
+    } catch (err) {
+      setRefreshError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRefreshing(false);
     }
   }
 
@@ -369,21 +407,43 @@ function PriceRow({
             )}
           </div>
         ) : (
-          <div className="flex justify-end gap-2">
-            <button
-              onClick={() => setEditing(true)}
-              className="text-xs text-blue-600 underline"
-            >
-              Edit
-            </button>
-            <button
-              onClick={handleDelete}
-              disabled={busy}
-              className="text-xs text-neutral-400 hover:text-red-600"
-              aria-label={`Remove ${regionLabel(price)}`}
-            >
-              ×
-            </button>
+          <div className="flex flex-col items-end gap-1">
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={handleRefresh}
+                disabled={refreshing || busy}
+                className="text-xs text-blue-600 underline disabled:cursor-not-allowed disabled:text-neutral-300 disabled:no-underline"
+                title="Re-fetch the current sticker price from the retailer page"
+                aria-label={`Refresh price for ${regionLabel(price)}`}
+              >
+                {refreshing ? "Refreshing…" : "↻ Refresh"}
+              </button>
+              <button
+                onClick={() => {
+                  setEditing(true);
+                  setRefreshError(null);
+                }}
+                className="text-xs text-blue-600 underline"
+              >
+                Edit
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={busy}
+                className="text-xs text-neutral-400 hover:text-red-600"
+                aria-label={`Remove ${regionLabel(price)}`}
+              >
+                ×
+              </button>
+            </div>
+            {refreshError && (
+              <span
+                className="max-w-[220px] text-right text-[11px] text-red-600"
+                title={refreshError}
+              >
+                {refreshError}
+              </span>
+            )}
           </div>
         )}
       </td>

@@ -11,6 +11,7 @@ import {
   DEFAULT_EU_REFUND_RATE,
   DEFAULT_US_SALES_TAX_RATE,
 } from "@/lib/compute";
+import { fetchPriceFromUrl } from "@/lib/fetch-price-client";
 import { parseProductUrl, ProductUrlParseError } from "@/lib/product-url";
 import { formatPricePreview, parsePrice } from "@/lib/price-parse";
 import type { TrackedItem } from "@/lib/types";
@@ -86,6 +87,14 @@ export default function AddItemModal({ open, onClose, items, onAdd }: Props) {
   const [refundText, setRefundText] = useState(DEFAULT_EU_REFUND_TEXT);
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
+  /**
+   * State for the "Fetch price from page" button. `fetching` toggles
+   * the button label; `fetchError` is shown inline below the price
+   * field when extraction fails (bot block, no price found, currency
+   * mismatch, etc.).
+   */
+  const [fetching, setFetching] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   const dialogRef = useRef<HTMLDivElement>(null);
 
@@ -99,8 +108,44 @@ export default function AddItemModal({ open, onClose, items, onAdd }: Props) {
       setRefundText(DEFAULT_EU_REFUND_TEXT);
       setServerError(null);
       setSubmitting(false);
+      setFetching(false);
+      setFetchError(null);
     }
   }, [open]);
+
+  // Whenever the URL changes, clear any stale fetch error so it
+  // doesn't linger after the user pastes a different URL.
+  useEffect(() => {
+    setFetchError(null);
+  }, [url]);
+
+  /**
+   * "Fetch from page" button handler. Calls /api/extract-price with
+   * the current URL, and on success populates priceText with the
+   * extracted number. If the URL has parsed as a specific region (US
+   * or EU), we reject the result when the extracted currency doesn't
+   * match — otherwise we'd silently store a USD price as if it were
+   * EUR.
+   */
+  async function handleFetchPrice() {
+    if (parseResult.kind !== "ok") return;
+    setFetching(true);
+    setFetchError(null);
+    try {
+      const fetched = await fetchPriceFromUrl(url.trim());
+      const expected = isUs ? "USD" : "EUR";
+      if (fetched.currency !== expected) {
+        throw new Error(
+          `Page returned ${fetched.currency} but this is a ${parseResult.region} URL — paste manually`,
+        );
+      }
+      setPriceText(String(fetched.priceRaw));
+    } catch (err) {
+      setFetchError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setFetching(false);
+    }
+  }
 
   // Close on Escape.
   useEffect(() => {
@@ -306,9 +351,24 @@ export default function AddItemModal({ open, onClose, items, onAdd }: Props) {
           </div>
 
           <div>
-            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral-500">
-              {isUs ? "Sticker (USD, pre-tax)" : `Price (${currency})`}
-            </label>
+            <div className="mb-1 flex items-baseline justify-between gap-2">
+              <label className="block text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                {isUs ? "Sticker (USD, pre-tax)" : `Price (${currency})`}
+              </label>
+              <button
+                type="button"
+                onClick={handleFetchPrice}
+                disabled={parseResult.kind !== "ok" || fetching}
+                title={
+                  parseResult.kind !== "ok"
+                    ? "Paste a valid product URL first"
+                    : "Fetch the price from the retailer page"
+                }
+                className="text-xs font-medium text-blue-600 underline hover:text-blue-800 disabled:cursor-not-allowed disabled:text-neutral-300 disabled:no-underline"
+              >
+                {fetching ? "Fetching…" : "↻ Fetch from page"}
+              </button>
+            </div>
             <input
               type="text"
               inputMode="decimal"
@@ -318,6 +378,9 @@ export default function AddItemModal({ open, onClose, items, onAdd }: Props) {
               className="w-full rounded border border-neutral-300 px-3 py-2 text-sm focus:border-neutral-500 focus:outline-none"
               aria-label="Price"
             />
+            {fetchError && (
+              <p className="mt-1 text-xs text-red-600">{fetchError}</p>
+            )}
             {priceText.trim() !== "" && (
               <p className="mt-1 text-xs text-neutral-500">
                 {parsedPrice !== null ? (
