@@ -1,0 +1,64 @@
+name: Deploy to EC2
+
+# Push to main → ship to the EC2 box. The workflow can also be run
+# manually via the "Run workflow" button on the Actions tab if you
+# need to redeploy without a code change (e.g. after a config tweak
+# on the box itself).
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# Don't run two deploys at the same time. If a second push lands
+# while the first is still deploying, queue it — don't cancel the
+# in-flight one (which would leave the box in a half-deployed state).
+concurrency:
+  group: deploy-ec2
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: SSH + deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Echo target
+        run: |
+          echo "Deploying ${{ github.sha }} to ${{ secrets.EC2_HOST }}"
+          echo "Project dir: ${{ secrets.EC2_PROJECT_DIR || '~/eu-shopping-list' }}"
+
+      # appleboy/ssh-action is the most widely used SSH action and
+      # handles known_hosts, key parsing, and command streaming
+      # cleanly. Pinned to a specific version (not @v1) to avoid
+      # supply-chain surprises if the maintainer ever publishes a
+      # bad release.
+      - name: Run deploy script over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          # Optional: a non-default SSH port. Leave empty for 22.
+          port: ${{ secrets.EC2_SSH_PORT || 22 }}
+          # Fail the workflow if any command in the block exits non-zero.
+          script_stop: true
+          # The remote script:
+          #   1. cd to the project dir (defaults to ~/eu-shopping-list)
+          #   2. Fetch + hard-reset to the deployed commit
+          #   3. Run the in-repo deploy-on-ec2.sh which does the
+          #      actual install/build/pm2-reload/healthcheck.
+          #
+          # We do the git operations here (in the workflow YAML)
+          # rather than inside the script so the FIRST deploy works
+          # even when the script doesn't exist on the box yet — the
+          # git fetch+reset writes it into place before we exec it.
+          script: |
+            set -euo pipefail
+            cd "${{ secrets.EC2_PROJECT_DIR || '~/eu-shopping-list' }}"
+            echo "==> fetching ${{ github.sha }}"
+            git fetch origin main
+            git reset --hard ${{ github.sha }}
+            chmod +x scripts/deploy-on-ec2.sh
+            bash scripts/deploy-on-ec2.sh
