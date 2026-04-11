@@ -70,10 +70,14 @@ container restarts.
    include sales tax).
 
 5. **Type the product name and price.** For **US** URLs, the modal
-   also shows a **Sales tax %** input — enter your delivery state's
-   rate (e.g. `7.25` for California, `8.875` for NYC, `0` if you're
-   shipping to a tax-free state like Oregon). It defaults to 0%.
-   Click **Save item**. The modal closes and a card appears.
+   also shows a **Sales tax %** input. It pre-fills with **6%**
+   (the all-in rate for Northern Virginia / ZIP 22180 — 5.3%
+   state + local + 0.7% NoVa regional). If you ship somewhere else,
+   override it: e.g. `7.25` for California, `8.875` for NYC, `0`
+   for tax-free states like Oregon / Montana / Delaware. See
+   `DEFAULT_US_SALES_TAX_RATE` in `lib/compute.ts` to change the
+   global default. Click **Save item**. The modal closes and a
+   card appears.
 
 6. **Add more regions to the same product.** Scroll to the card and
    click **+ Add another region**. A small inline form appears

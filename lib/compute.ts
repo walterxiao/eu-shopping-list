@@ -12,6 +12,19 @@ import type {
  */
 const DEFAULT_EU_REFUND_RATE = 0.12;
 
+/**
+ * Default US sales tax rate applied when a US item has no explicit
+ * salesTaxRate stored. Set to 6% which is the all-in sales tax rate
+ * for most of Northern Virginia (4.3% state + 1.0% statewide local
+ * + 0.7% NoVa regional) including ZIP 22180 (Vienna, Fairfax
+ * County).
+ *
+ * Override per item in the AddItem form or the inline Edit cell if
+ * you ship to a different state. Set to 0 explicitly if you want a
+ * tax-free comparison.
+ */
+export const DEFAULT_US_SALES_TAX_RATE = 0.06;
+
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
@@ -49,7 +62,11 @@ function priceForItem(
   if (item.currency === "USD") {
     const rawUsd = item.priceRaw;
     const rawEur = fxRate != null ? round2(rawUsd * fxRate) : NaN;
-    const salesTaxRate = item.salesTaxRate ?? 0;
+    // Fall back to the DEFAULT_US_SALES_TAX_RATE if the row has no
+    // explicit rate stored. The user can override per-item; storing
+    // 0 explicitly (as opposed to leaving the field NULL) disables
+    // sales tax for a specific row.
+    const salesTaxRate = item.salesTaxRate ?? DEFAULT_US_SALES_TAX_RATE;
     const netEur = Number.isFinite(rawEur)
       ? round2(rawEur * (1 + salesTaxRate))
       : NaN;

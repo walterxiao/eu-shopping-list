@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, type FormEvent } from "react";
+import { DEFAULT_US_SALES_TAX_RATE } from "@/lib/compute";
 import { parseProductUrl, ProductUrlParseError } from "@/lib/product-url";
 import { formatPricePreview, parsePrice } from "@/lib/price-parse";
 import type {
@@ -8,6 +9,8 @@ import type {
   ItemPrice,
   TrackedItem,
 } from "@/lib/types";
+
+const DEFAULT_US_SALES_TAX_TEXT = String(DEFAULT_US_SALES_TAX_RATE * 100);
 
 interface Props {
   loading: boolean;
@@ -87,9 +90,16 @@ function PriceRow({
   const isUs = item.region === "US";
   const [editing, setEditing] = useState(false);
   const [priceText, setPriceText] = useState(String(item.priceRaw));
-  /** Sales-tax percent string (e.g. "7.25"); only used for US rows. */
+  /**
+   * Sales-tax percent string (e.g. "7.25"); only used for US rows.
+   * If the stored item has no explicit rate, fall back to the
+   * app-wide default so the edit field matches what the compute
+   * layer is already applying to the displayed Net.
+   */
   const [salesTaxText, setSalesTaxText] = useState(
-    item.salesTaxRate !== undefined ? String(item.salesTaxRate * 100) : "",
+    item.salesTaxRate !== undefined
+      ? String(item.salesTaxRate * 100)
+      : DEFAULT_US_SALES_TAX_TEXT,
   );
   const [busy, setBusy] = useState(false);
 
@@ -133,12 +143,15 @@ function PriceRow({
    * Right-column "Adjustment" cell: shows the signed delta between
    * sticker and net for this row.
    *   EU rows  → "−12% refund"
-   *   US rows  → "+8.25% tax" (or "+0% tax" / "—" if not specified)
+   *   US rows  → "+6% tax" (default) or "+8.25% tax" (explicit) or
+   *              "+0% tax" (explicit zero, muted gray)
    */
   function renderAdjustmentCell(): React.ReactNode {
     if (isUs) {
-      const rate = item.salesTaxRate;
-      if (rate === undefined || rate === 0) {
+      // Undefined (legacy) AND explicit-matching-default look the same
+      // so the user sees "+6% tax" and not a surprising "+0% tax".
+      const rate = item.salesTaxRate ?? DEFAULT_US_SALES_TAX_RATE;
+      if (rate === 0) {
         return <span className="text-neutral-400">+0% tax</span>;
       }
       return `+${(rate * 100).toFixed(2)}% tax`;
@@ -273,7 +286,7 @@ function PriceRow({
                   setSalesTaxText(
                     item.salesTaxRate !== undefined
                       ? String(item.salesTaxRate * 100)
-                      : "",
+                      : DEFAULT_US_SALES_TAX_TEXT,
                   );
                 }}
                 className="rounded px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-100"
@@ -332,7 +345,9 @@ function AddAnotherRegionForm({
   const [expanded, setExpanded] = useState(false);
   const [url, setUrl] = useState("");
   const [priceText, setPriceText] = useState("");
-  const [salesTaxText, setSalesTaxText] = useState("");
+  const [salesTaxText, setSalesTaxText] = useState(
+    DEFAULT_US_SALES_TAX_TEXT,
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -417,7 +432,7 @@ function AddAnotherRegionForm({
       );
       setUrl("");
       setPriceText("");
-      setSalesTaxText("");
+      setSalesTaxText(DEFAULT_US_SALES_TAX_TEXT);
       setExpanded(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -452,7 +467,7 @@ function AddAnotherRegionForm({
             setExpanded(false);
             setUrl("");
             setPriceText("");
-            setSalesTaxText("");
+            setSalesTaxText(DEFAULT_US_SALES_TAX_TEXT);
             setError(null);
           }}
           className="text-xs text-neutral-400 hover:text-neutral-700"

@@ -58,13 +58,17 @@ describe("groupAndAnalyze", () => {
     expect(us.rawUsd).toBe(1100);
     // US raw in EUR = 1100 * 0.92 = 1012
     expect(us.rawEur).toBeCloseTo(1012, 2);
-    // US has no refund, net === rawEur
-    expect(us.netEur).toBeCloseTo(1012, 2);
+    // US with no explicit sales tax: falls back to the app default
+    // (DEFAULT_US_SALES_TAX_RATE = 0.06, Northern VA ZIP 22180).
+    // net = 1012 * 1.06 = 1072.72
+    expect(us.netEur).toBeCloseTo(1072.72, 2);
 
-    // Cheapest raw: US (1012) beats IT (1190)
+    // Cheapest raw (sticker only): US (1012) still beats IT (1190)
     expect(card.cheapestRawItemId).toBe("us");
-    // Cheapest net: US (1012) still beats IT (1047.20) in this example
-    expect(card.cheapestNetItemId).toBe("us");
+    // Cheapest net (after refund / after tax): IT (1047.20) beats
+    // US-with-default-tax (1072.72) — the default sales tax flips
+    // the winner from US to IT.
+    expect(card.cheapestNetItemId).toBe("it");
   });
 
   it("supports 3+ region comparisons (the v7 ask)", () => {
@@ -88,16 +92,17 @@ describe("groupAndAnalyze", () => {
     expect(regions).toContain("fr");
     expect(regions).toContain("US");
 
-    // Cheapest raw in EUR: US (1450 * 0.92 = 1334) vs EU items (1290/1290/1300).
-    // DE and IT are 1290 → the first one in sorted order wins.
+    // Cheapest raw in EUR: US (1450 * 0.92 = 1334) vs EU items
+    // (1290/1290/1300). DE and IT are 1290 → the first one in sorted
+    // order wins.
     expect(["de", "it"]).toContain(card.cheapestRawItemId);
 
-    // Cheapest after refund:
-    //   DE net = 1290 * 0.89 = 1148.10
-    //   IT net = 1290 * 0.88 = 1135.20
-    //   FR net = 1300 * 0.88 = 1144.00
-    //   US net = 1334 (no refund)
-    // IT wins.
+    // Cheapest after refund / after tax:
+    //   DE net = 1290 * 0.89            = 1148.10
+    //   IT net = 1290 * 0.88            = 1135.20
+    //   FR net = 1300 * 0.88            = 1144.00
+    //   US net = 1450 * 0.92 * 1.06     = 1413.88 (default 6% tax)
+    // IT wins by a wider margin now that the US row carries tax.
     expect(card.cheapestNetItemId).toBe("it");
   });
 
@@ -194,14 +199,39 @@ describe("groupAndAnalyze", () => {
 
   // ----- v7 sales-tax-on-US tests -----
 
-  it("US item with no sales tax: net === rawEur (back-compat default)", () => {
+  it("US item with no sales tax: applies the DEFAULT_US_SALES_TAX_RATE", () => {
+    // When salesTaxRate is undefined (NULL in the DB), compute falls
+    // back to DEFAULT_US_SALES_TAX_RATE (0.06 = Northern VA ZIP 22180)
+    // rather than treating it as 0%. This makes the "no tax entered"
+    // case match what most US online shoppers actually pay at
+    // checkout without requiring them to re-open every row.
     const items = [
       mk({
         id: "us",
         region: "US",
         currency: "USD",
         priceRaw: 1000,
-        // salesTaxRate omitted → undefined → 0%
+        // salesTaxRate omitted → undefined → default 6% applied
+      }),
+    ];
+    const res = groupAndAnalyze(items, 0.92);
+    const us = findRow(res[0], "us");
+    expect(us.rawEur).toBeCloseTo(920, 2);
+    // 920 * 1.06 = 975.20
+    expect(us.netEur).toBeCloseTo(975.2, 2);
+  });
+
+  it("US item with explicit 0% sales tax: net === rawEur (override)", () => {
+    // Setting salesTaxRate: 0 explicitly (vs leaving it undefined)
+    // should disable the default — useful for modeling Oregon,
+    // Montana, Delaware, or tax-free shipping.
+    const items = [
+      mk({
+        id: "us",
+        region: "US",
+        currency: "USD",
+        priceRaw: 1000,
+        salesTaxRate: 0,
       }),
     ];
     const res = groupAndAnalyze(items, 0.92);

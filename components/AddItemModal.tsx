@@ -7,9 +7,12 @@ import {
   useState,
   type FormEvent,
 } from "react";
+import { DEFAULT_US_SALES_TAX_RATE } from "@/lib/compute";
 import { parseProductUrl, ProductUrlParseError } from "@/lib/product-url";
 import { formatPricePreview, parsePrice } from "@/lib/price-parse";
 import type { TrackedItem } from "@/lib/types";
+
+const DEFAULT_US_SALES_TAX_TEXT = String(DEFAULT_US_SALES_TAX_RATE * 100);
 
 interface Props {
   open: boolean;
@@ -62,8 +65,14 @@ export default function AddItemModal({ open, onClose, items, onAdd }: Props) {
   const [url, setUrl] = useState("");
   const [productName, setProductName] = useState("");
   const [priceText, setPriceText] = useState("");
-  /** Percent string entered by the user, e.g. "8.25". Empty = 0%. */
-  const [salesTaxText, setSalesTaxText] = useState("");
+  /**
+   * Percent string entered by the user, e.g. "8.25". Defaults to the
+   * app-wide US sales tax default so the user can just tab past it.
+   * Setting it to "0" explicitly disables sales tax for that row.
+   */
+  const [salesTaxText, setSalesTaxText] = useState(
+    DEFAULT_US_SALES_TAX_TEXT,
+  );
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
 
@@ -75,7 +84,7 @@ export default function AddItemModal({ open, onClose, items, onAdd }: Props) {
       setUrl("");
       setProductName("");
       setPriceText("");
-      setSalesTaxText("");
+      setSalesTaxText(DEFAULT_US_SALES_TAX_TEXT);
       setServerError(null);
       setSubmitting(false);
     }
@@ -296,7 +305,7 @@ export default function AddItemModal({ open, onClose, items, onAdd }: Props) {
                   inputMode="decimal"
                   value={salesTaxText}
                   onChange={(e) => setSalesTaxText(e.target.value)}
-                  placeholder="0"
+                  placeholder={DEFAULT_US_SALES_TAX_TEXT}
                   className="w-24 rounded border border-neutral-300 px-3 py-2 text-sm focus:border-neutral-500 focus:outline-none"
                   aria-label="Sales tax percent"
                 />
@@ -315,7 +324,8 @@ export default function AddItemModal({ open, onClose, items, onAdd }: Props) {
                   </span>
                 ) : (
                   <span className="text-xs text-neutral-500">
-                    Defaults to 0% (no sales tax)
+                    Default {DEFAULT_US_SALES_TAX_TEXT}% (Northern VA /
+                    ZIP 22180). Clear or set to 0 to disable.
                   </span>
                 )}
               </div>
