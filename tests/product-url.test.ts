@@ -261,6 +261,75 @@ describe("parseProductUrl — product code extraction edge cases", () => {
     expect(parsed.productCode).toBe("B0CHX1W1TX");
     expect(parsed.sourceRegion).toBe("US");
   });
+
+  it("parses a Van Cleef & Arpels URL with `CODE---slug` structure", () => {
+    const parsed = parseProductUrl(
+      "https://www.vancleefarpels.com/us/en/collections/jewelry/alhambra/vcarf48700---vintage-alhambra-pendant.html",
+    );
+    expect(parsed.host).toBe("www.vancleefarpels.com");
+    expect(parsed.sourceRegion).toBe("US");
+    expect(parsed.productCode).toBe("vcarf48700");
+  });
+
+  it("parses a Graff URL with `CODE_CODE` underscore-separated structure", () => {
+    const parsed = parseProductUrl(
+      "https://www.graff.com/us-en/jewelry/view-by-collection/laurence-graff-signature/rings/laurance-graff-signature-four-row-layered-diamond-ring/RGR1086ALL_RGR1086ALL.html",
+    );
+    expect(parsed.host).toBe("www.graff.com");
+    expect(parsed.sourceRegion).toBe("US");
+    expect(parsed.productCode).toBe("RGR1086ALL");
+  });
+
+  it("parses a Chanel URL where the SKU is an earlier path segment", () => {
+    const parsed = parseProductUrl(
+      "https://www.chanel.com/us/fashion/p/AS6233B24008U8393/maxi-flapbag-grained-calfskin-silver-tone-metal/",
+    );
+    expect(parsed.host).toBe("www.chanel.com");
+    expect(parsed.sourceRegion).toBe("US");
+    // The last segment is the descriptive slug (no digits). The parser
+    // scans right-to-left, falls through to the whole-segment
+    // alphanumeric pattern on the previous segment, and captures the
+    // SKU there.
+    expect(parsed.productCode).toBe("AS6233B24008U8393");
+  });
+
+  it("does NOT false-positive on a leading single-dash slug", () => {
+    // "product-name" does not look like "CODE---slug", so the leading-
+    // alphanumeric pattern should not fire. Pattern 2 (trailing after
+    // dash) also fails because "name" has no digit. This URL should
+    // be rejected as "no product code found".
+    expect(() =>
+      parseProductUrl("https://www.example.com/us-en/shop/product-name"),
+    ).toThrow(/product code/i);
+  });
+});
+
+// ------------------------------------------------------------------
+// Homepage detection
+// ------------------------------------------------------------------
+
+describe("parseProductUrl — homepage detection", () => {
+  it("rejects a bare /us/ landing page (Chanel homepage)", () => {
+    expect(() =>
+      parseProductUrl(
+        "https://www.chanel.com/us/?gclsrc=aw.ds&gad_source=1&gclid=x",
+      ),
+    ).toThrow(/homepage|category/i);
+  });
+
+  it("rejects a /us-en/home/ URL (Graff homepage)", () => {
+    expect(() =>
+      parseProductUrl(
+        "https://www.graff.com/us-en/home/?gad_source=1&gclid=x",
+      ),
+    ).toThrow(/homepage|category/i);
+  });
+
+  it("rejects a generic /us/shop/ landing page", () => {
+    expect(() =>
+      parseProductUrl("https://www.example.com/us/shop/"),
+    ).toThrow(/homepage|category/i);
+  });
 });
 
 // ------------------------------------------------------------------

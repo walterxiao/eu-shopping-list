@@ -159,27 +159,46 @@ function detectRegion(rawSegment: string): SegmentResult {
  * Extract a product code from the URL path. Tries multiple patterns
  * against each path segment (scanning from last to first) and returns
  * the first match. Handles:
- *   - trailing 6+ digit numbers (Rimowa: "…/92552634.html")
- *   - dash-prefixed alphanumerics (Moncler: "…-L10911A001605968E742.html")
- *   - bare alphanumeric tokens (Amazon: "…/dp/B0CHX1W1TX")
+ *   - Trailing 6+ digit numbers (Rimowa: "…/92552634.html")
+ *   - Dash-prefixed alphanumerics (Moncler:
+ *     "…-L10911A001605968E742.html")
+ *   - Leading alphanumerics before a separator (Van Cleef:
+ *     "vcarf48700---vintage-alhambra-pendant", Graff:
+ *     "RGR1086ALL_RGR1086ALL")
+ *   - Bare alphanumeric tokens (Amazon ASIN: "…/dp/B0CHX1W1TX";
+ *     Chanel: "…/p/AS6233B24008U8393/…")
+ *
+ * All alphanumeric patterns require mixed letters AND digits in the
+ * captured token so plain words like "-hooded" or "-pendant" don't
+ * get misidentified as product codes.
  */
 function extractProductCode(segments: string[]): string | null {
   for (let i = segments.length - 1; i >= 0; i--) {
     const cleaned = segments[i].replace(/\.(html?|php)$/i, "");
 
-    // 1) Trailing 6+ digit number
+    // 1) Trailing 6+ digit number (Rimowa).
     const numMatch = cleaned.match(/(\d{6,})$/);
     if (numMatch) return numMatch[1];
 
-    // 2) Trailing alphanumeric after a dash (5+ chars, must include at
-    //    least one letter and one digit to avoid false positives on
-    //    pure words like "-hooded")
+    // 2) Trailing alphanumeric after a dash (Moncler / Nike).
     const dashMatch = cleaned.match(/-([A-Z0-9]{5,})$/i);
     if (dashMatch && /\d/.test(dashMatch[1]) && /[A-Z]/i.test(dashMatch[1])) {
       return dashMatch[1];
     }
 
-    // 3) Whole segment is an alphanumeric token (5+ chars, mixed)
+    // 3) Leading alphanumeric followed by `_` or a multi-hyphen `--`
+    //    separator (Van Cleef & Arpels uses `CODE---descriptive-slug`;
+    //    Graff uses `CODE_CODE`). Requires mixed letters + digits.
+    const leadSepMatch = cleaned.match(/^([A-Z0-9]{5,})(?:-{2,}|_)/i);
+    if (
+      leadSepMatch &&
+      /\d/.test(leadSepMatch[1]) &&
+      /[A-Z]/i.test(leadSepMatch[1])
+    ) {
+      return leadSepMatch[1];
+    }
+
+    // 4) Whole segment is an alphanumeric token (Amazon, Chanel).
     if (
       /^[A-Z0-9]{5,}$/i.test(cleaned) &&
       /\d/.test(cleaned) &&
@@ -190,6 +209,22 @@ function extractProductCode(segments: string[]): string | null {
   }
   return null;
 }
+
+/**
+ * Path segments that strongly suggest a homepage or landing page
+ * rather than a specific product. When URL parsing fails to find a
+ * product code and the last segment is one of these, we throw a
+ * clearer error instead of the generic "no product code found".
+ */
+const HOMEPAGE_SEGMENTS = new Set([
+  "home",
+  "index",
+  "shop",
+  "store",
+  "welcome",
+  "category",
+  "search",
+]);
 
 /**
  * Parse any e-commerce product URL and extract what we can for
@@ -251,9 +286,24 @@ export function parseProductUrl(input: string): ParsedProductUrl {
 
   const productCode = extractProductCode(segments);
   if (!productCode) {
+    // When code extraction fails, check if the URL looks like a
+    // homepage / landing page (either very short path, or the last
+    // segment is a generic landing word like "home"). Those cases
+    // get a friendlier error pointing the user at a product page.
+    const lastCleaned = segments[segments.length - 1]
+      .replace(/\.(html?|php)$/i, "")
+      .toLowerCase();
+    const looksLikeHomepage =
+      segments.length <= 2 || HOMEPAGE_SEGMENTS.has(lastCleaned);
+    if (looksLikeHomepage) {
+      throw new ProductUrlParseError(
+        `This looks like a homepage or category page, not a specific product. Browse to an individual item on ${host} and paste that URL instead.`,
+      );
+    }
     throw new ProductUrlParseError(
       "No product code found in URL. Expected a trailing numeric code " +
-        "(e.g. 92552634) or an alphanumeric SKU (e.g. L10911A001605968E742).",
+        "(e.g. 92552634), an alphanumeric SKU (e.g. L10911A001605968E742), " +
+        "or a leading code like 'vcarf48700---…' or 'RGR1086ALL_…'.",
     );
   }
 
