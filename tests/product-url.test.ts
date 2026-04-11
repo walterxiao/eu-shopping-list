@@ -284,6 +284,68 @@ describe("parseProductUrl — Moncler (alphanumeric SKU, en-us locale)", () => {
   });
 });
 
+// ------------------------------------------------------------------
+// IWC (leading alphanumeric + single-dash slug) — new in v10
+// ------------------------------------------------------------------
+
+describe("parseProductUrl — IWC (leading alphanumeric + slug)", () => {
+  // The exact URL the user asked for.
+  const IWC_US =
+    "https://www.iwc.com/us-en/watches/portugieser/iw371631-portugieser-chronograph-ceratanium";
+
+  it("parses the user's IWC US Portugieser URL", () => {
+    const p = parseProductUrl(IWC_US);
+    expect(p.host).toBe("www.iwc.com");
+    expect(p.productCode).toBe("iw371631");
+    expect(p.sourceRegion).toBe("US");
+    // US items carry no euRefundRate / jpTaxFreeRate.
+    expect(p.euRefundRate).toBeUndefined();
+    expect(p.jpTaxFreeRate).toBeUndefined();
+  });
+
+  it("parses an IWC EU equivalent (it-it locale)", () => {
+    const p = parseProductUrl(
+      "https://www.iwc.com/it-it/watches/portugieser/iw371631-portugieser-chronograph-ceratanium",
+    );
+    expect(p.productCode).toBe("iw371631");
+    expect(p.sourceRegion).toBe("EU");
+    expect(p.sourceCountry).toBe("it");
+    expect(p.euRefundRate).toBe(0.12);
+  });
+
+  it("handles an uppercase SKU prefix", () => {
+    // Some retailers use IW371631 uppercase; we preserve the case
+    // as it appears in the URL since the grouping is name-based
+    // anyway. Pattern is case-insensitive via the /i flag.
+    const p = parseProductUrl(
+      "https://www.iwc.com/us-en/watches/portugieser/IW371631-portugieser-chronograph-ceratanium",
+    );
+    expect(p.productCode).toBe("IW371631");
+  });
+
+  it("does NOT match a pure-word slug start (no digits)", () => {
+    // "black-hooded-jacket" starts with a word, no digits.
+    // Pattern 4 requires mixed letters+digits in the captured
+    // token so this falls through to pattern 5 (whole-segment),
+    // which also fails because of the hyphens, and ultimately
+    // throws "no product code found".
+    expect(() =>
+      parseProductUrl(
+        "https://www.example.com/us-en/cabin/black-hooded-jacket",
+      ),
+    ).toThrow(/product code/i);
+  });
+
+  it("does NOT misfire on a short leading token (< 5 chars)", () => {
+    // "ab12-foo" has only 4 chars before the dash. Pattern 4
+    // requires 5+ so this doesn't match and the parser falls
+    // through to an error.
+    expect(() =>
+      parseProductUrl("https://www.example.com/us-en/shop/ab12-foo"),
+    ).toThrow(/product code/i);
+  });
+});
+
 describe("parseProductUrl — hostname-agnostic", () => {
   it("accepts a non-Rimowa hostname (the whole point of v5)", () => {
     // v4 used to reject this as "Expected a rimowa.com URL".

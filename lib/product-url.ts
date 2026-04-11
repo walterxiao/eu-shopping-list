@@ -193,14 +193,16 @@ function detectRegion(rawSegment: string): SegmentResult {
  *   - Trailing 6+ digit numbers (Rimowa: "…/92552634.html")
  *   - Dash-prefixed alphanumerics (Moncler:
  *     "…-L10911A001605968E742.html")
- *   - Leading alphanumerics before a separator (Van Cleef:
- *     "vcarf48700---vintage-alhambra-pendant", Graff:
+ *   - Leading alphanumerics before `_` or a multi-hyphen `--`
+ *     (Van Cleef: "vcarf48700---vintage-alhambra-pendant", Graff:
  *     "RGR1086ALL_RGR1086ALL")
+ *   - Leading alphanumerics before a single `-` and a lowercase slug
+ *     (IWC: "iw371631-portugieser-chronograph-ceratanium")
  *   - Bare alphanumeric tokens (Amazon ASIN: "…/dp/B0CHX1W1TX";
  *     Chanel: "…/p/AS6233B24008U8393/…")
  *
  * All alphanumeric patterns require mixed letters AND digits in the
- * captured token so plain words like "-hooded" or "-pendant" don't
+ * captured token so plain words like "-hooded" or "black-hooded" don't
  * get misidentified as product codes.
  */
 function extractProductCode(segments: string[]): string | null {
@@ -229,7 +231,23 @@ function extractProductCode(segments: string[]): string | null {
       return leadSepMatch[1];
     }
 
-    // 4) Whole segment is an alphanumeric token (Amazon, Chanel).
+    // 4) Leading alphanumeric followed by a single `-` and a lowercase
+    //    slug — IWC: "iw371631-portugieser-chronograph-ceratanium".
+    //    Distinct from pattern 3 which needs `--` or `_`. The lookahead
+    //    `-[a-z]` requires a letter after the separator so numbers
+    //    like "12345-6" don't trip it. Mixed letters+digits in the
+    //    captured token rejects pure-word starts ("black-hooded-jacket"
+    //    → "black" has no digits → no match).
+    const leadDashSlugMatch = cleaned.match(/^([A-Z0-9]{5,})-[a-z]/i);
+    if (
+      leadDashSlugMatch &&
+      /\d/.test(leadDashSlugMatch[1]) &&
+      /[A-Z]/i.test(leadDashSlugMatch[1])
+    ) {
+      return leadDashSlugMatch[1];
+    }
+
+    // 5) Whole segment is an alphanumeric token (Amazon, Chanel).
     if (
       /^[A-Z0-9]{5,}$/i.test(cleaned) &&
       /\d/.test(cleaned) &&
