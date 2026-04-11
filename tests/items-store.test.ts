@@ -25,6 +25,10 @@ const MONCLER_US_URL =
   "https://www.moncler.com/en-us/men/outerwear/windbreakers-and-raincoats/etiache-hooded-rain-jacket-navy-blue-L10911A001605968E742.html";
 const MONCLER_IT_URL =
   "https://www.moncler.com/it-it/men/outerwear/etiache-hooded-rain-jacket-L10911A001605968E742.html";
+const RIMOWA_JP_URL =
+  "https://www.rimowa.com/jp/ja/luggage-collection-essential-trunk-plus/83280631.html";
+const RIMOWA_HK_URL =
+  "https://www.rimowa.com/hk/en/luggage/colour/black/trunk-plus/83280631.html";
 
 describe("items-store", () => {
   beforeEach(() => {
@@ -91,6 +95,85 @@ describe("items-store", () => {
     expect(item.sourceCountry).toBe("it");
     expect(item.euRefundRate).toBe(0.12);
     expect(item.currency).toBe("EUR");
+  });
+
+  it("creates a Japanese item with JPY currency and 10% default tax-free", () => {
+    const item = createItem({
+      url: RIMOWA_JP_URL,
+      productName: "Rimowa Trunk Plus",
+      priceRaw: 220_000,
+    });
+    expect(item.host).toBe("www.rimowa.com");
+    expect(item.productCode).toBe("83280631");
+    expect(item.region).toBe("JP");
+    expect(item.sourceCountry).toBe("jp");
+    expect(item.currency).toBe("JPY");
+    expect(item.jpTaxFreeRate).toBe(0.1);
+    expect(item.euRefundRate).toBeUndefined();
+    expect(item.salesTaxRate).toBeUndefined();
+  });
+
+  it("creates a Hong Kong item with HKD currency and no rate fields", () => {
+    const item = createItem({
+      url: RIMOWA_HK_URL,
+      productName: "Rimowa Trunk Plus",
+      priceRaw: 11_500,
+    });
+    expect(item.host).toBe("www.rimowa.com");
+    expect(item.productCode).toBe("83280631");
+    expect(item.region).toBe("HK");
+    expect(item.sourceCountry).toBe("hk");
+    expect(item.currency).toBe("HKD");
+    // HK has no VAT/sales tax — none of the rate fields are set.
+    expect(item.euRefundRate).toBeUndefined();
+    expect(item.salesTaxRate).toBeUndefined();
+    expect(item.jpTaxFreeRate).toBeUndefined();
+  });
+
+  it("uses an explicit jpTaxFreeRate override on a JP item", () => {
+    const item = createItem({
+      url: RIMOWA_JP_URL,
+      productName: "Rimowa Trunk Plus",
+      priceRaw: 220_000,
+      jpTaxFreeRate: 0, // user can't claim it
+    });
+    expect(item.region).toBe("JP");
+    expect(item.jpTaxFreeRate).toBe(0);
+  });
+
+  it("ignores jpTaxFreeRate on non-JP items", () => {
+    const item = createItem({
+      url: IT_URL,
+      productName: "Classic Cabin",
+      priceRaw: 1275,
+      jpTaxFreeRate: 0.1, // wrong region — should be dropped
+    });
+    expect(item.region).toBe("EU");
+    expect(item.jpTaxFreeRate).toBeUndefined();
+  });
+
+  it("rejects a jpTaxFreeRate larger than 1", () => {
+    expect(() =>
+      createItem({
+        url: RIMOWA_JP_URL,
+        productName: "X",
+        priceRaw: 1,
+        jpTaxFreeRate: 10, // user passed 10 instead of 0.10
+      }),
+    ).toThrow(/fraction/i);
+  });
+
+  it("updateItem can change a JP item's jpTaxFreeRate without touching price", () => {
+    const created = createItem({
+      url: RIMOWA_JP_URL,
+      productName: "X",
+      priceRaw: 220_000,
+    });
+    expect(created.jpTaxFreeRate).toBe(0.1);
+    const updated = updateItem(created.id, { jpTaxFreeRate: 0.05 });
+    expect(updated).not.toBeNull();
+    expect(updated!.jpTaxFreeRate).toBe(0.05);
+    expect(updated!.priceRaw).toBe(220_000);
   });
 
   it("creates a US item with USD currency and no refund rate", () => {
@@ -457,7 +540,7 @@ describe("items-store — v4 → v6 upgrade migration", () => {
     expect(legacy!.euRefundRate).toBe(0.12);
   });
 
-  it("sets user_version to 7 (current schema) so migrations don't re-run", () => {
+  it("sets user_version to 8 (current schema) so migrations don't re-run", () => {
     // Touch the DB once so the migration chain runs.
     listItems();
     // Open a read-only handle and check the pragma.
@@ -466,7 +549,19 @@ describe("items-store — v4 → v6 upgrade migration", () => {
       .prepare("PRAGMA user_version")
       .get() as { user_version: number };
     db.close();
-    expect(row.user_version).toBe(7);
+    expect(row.user_version).toBe(8);
+  });
+
+  it("v8 migration adds the jp_tax_free_rate column on upgrade", () => {
+    // Touch the DB once so the migration chain runs.
+    listItems();
+    const db = new Database(tmpPath, { readonly: true });
+    const cols = db
+      .prepare("PRAGMA table_info(tracked_items)")
+      .all() as { name: string }[];
+    db.close();
+    const names = cols.map((c) => c.name);
+    expect(names).toContain("jp_tax_free_rate");
   });
 
   it("v7 migration adds the sales_tax_rate column on upgrade", () => {

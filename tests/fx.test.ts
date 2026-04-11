@@ -2,11 +2,22 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { getUsdToEurRate, setFetchImplForTest } from "@/lib/fx";
 import { resetDbForTest } from "@/lib/db";
 
-function makeOkResponse(rate: number): Response {
-  return new Response(JSON.stringify({ rates: { EUR: rate } }), {
-    status: 200,
-    headers: { "Content-Type": "application/json" },
-  });
+/**
+ * Build a response shaped like exchangerate.host's USD-base reply.
+ * Defaults HKD and JPY to plausible mid-2025 values so existing tests
+ * that only care about the USD→EUR rate continue to pass without
+ * having to spell out the other two pairs.
+ */
+function makeOkResponse(eurRate: number): Response {
+  return new Response(
+    JSON.stringify({
+      rates: { EUR: eurRate, HKD: 7.83, JPY: 150 },
+    }),
+    {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    },
+  );
 }
 
 describe("getUsdToEurRate", () => {

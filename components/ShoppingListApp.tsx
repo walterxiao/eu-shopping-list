@@ -69,6 +69,7 @@ export default function ShoppingListApp() {
       priceRaw: number,
       salesTaxRate?: number,
       euRefundRate?: number,
+      jpTaxFreeRate?: number,
     ) => {
       const res = await fetch("/api/items", {
         method: "POST",
@@ -79,6 +80,7 @@ export default function ShoppingListApp() {
           priceRaw,
           ...(salesTaxRate !== undefined ? { salesTaxRate } : {}),
           ...(euRefundRate !== undefined ? { euRefundRate } : {}),
+          ...(jpTaxFreeRate !== undefined ? { jpTaxFreeRate } : {}),
         }),
       });
       if (!res.ok) {
@@ -101,6 +103,7 @@ export default function ShoppingListApp() {
         priceRaw?: number;
         salesTaxRate?: number;
         euRefundRate?: number;
+        jpTaxFreeRate?: number;
       },
     ) => {
       const res = await fetch(`/api/items/${id}`, {
@@ -129,7 +132,17 @@ export default function ShoppingListApp() {
   }, []);
 
   const comparison = useMemo(
-    () => groupAndAnalyze(items, fx?.rate ?? null),
+    () =>
+      groupAndAnalyze(
+        items,
+        fx
+          ? {
+              usdToEur: fx.rate,
+              hkdToEur: fx.hkdRate,
+              jpyToEur: fx.jpyRate,
+            }
+          : null,
+      ),
     [items, fx],
   );
 

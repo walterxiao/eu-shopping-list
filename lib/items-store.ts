@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 import { getDb } from "./db";
 import { parseProductUrl, ProductUrlParseError } from "./product-url";
 import type {
+  Currency,
   NewItemInput,
+  Region,
   TrackedItem,
   UpdateItemInput,
 } from "./types";
@@ -15,14 +17,16 @@ interface Row {
    * row with a malformed URL is left NULL. */
   host: string | null;
   product_code: string;
-  region: "EU" | "US";
+  region: Region;
   source_country: string | null;
   eu_refund_rate: number | null;
-  /** US sales tax rate (fraction); NULL for EU rows or unspecified. */
+  /** US sales tax rate (fraction); NULL for non-US rows or unspecified. */
   sales_tax_rate: number | null;
+  /** JP tourist tax-free rate (fraction); NULL for non-JP rows. */
+  jp_tax_free_rate: number | null;
   product_name: string;
   price_raw: number;
-  currency: "EUR" | "USD";
+  currency: Currency;
   updated_at: number;
 }
 
@@ -46,6 +50,7 @@ function rowToItem(row: Row): TrackedItem {
     sourceCountry: row.source_country ?? undefined,
     euRefundRate: row.eu_refund_rate ?? undefined,
     salesTaxRate: row.sales_tax_rate ?? undefined,
+    jpTaxFreeRate: row.jp_tax_free_rate ?? undefined,
     productName: row.product_name,
     priceRaw: row.price_raw,
     currency: row.currency,
@@ -95,6 +100,20 @@ function validateRate(
   }
 }
 
+/** Map a parsed region to its native currency. */
+function currencyForRegion(region: Region): Currency {
+  switch (region) {
+    case "US":
+      return "USD";
+    case "JP":
+      return "JPY";
+    case "HK":
+      return "HKD";
+    case "EU":
+      return "EUR";
+  }
+}
+
 export function createItem(input: NewItemInput): TrackedItem {
   const productName = input.productName.trim();
   if (!productName) {
@@ -105,26 +124,30 @@ export function createItem(input: NewItemInput): TrackedItem {
   }
   validateRate(input.salesTaxRate, "Sales tax rate");
   validateRate(input.euRefundRate, "EU refund rate");
+  validateRate(input.jpTaxFreeRate, "JP tax-free rate");
 
   // Throws ProductUrlParseError on bad input.
   const parsed = parseProductUrl(input.url);
 
   const id = randomUUID();
-  const currency = parsed.sourceRegion === "US" ? "USD" : "EUR";
+  const currency = currencyForRegion(parsed.sourceRegion);
 
-  // Sales tax only makes sense for US items; ignore the field for EU.
+  // Sales tax only makes sense for US items.
   const salesTaxRate =
-    parsed.sourceRegion === "US"
-      ? (input.salesTaxRate ?? null)
-      : null;
+    parsed.sourceRegion === "US" ? (input.salesTaxRate ?? null) : null;
 
-  // Tourist refund only makes sense for EU items; ignore for US.
-  // For EU, user override (input.euRefundRate) wins over the URL's
-  // country default (parsed.euRefundRate), which in turn wins over
-  // null (legacy, compute falls back to DEFAULT_EU_REFUND_RATE).
+  // Tourist refund only makes sense for EU items. User override wins
+  // over URL country default, which wins over null.
   const euRefundRate =
     parsed.sourceRegion === "EU"
       ? (input.euRefundRate ?? parsed.euRefundRate ?? null)
+      : null;
+
+  // JP tourist tax-free only makes sense for JP items. User override
+  // wins over URL default (DEFAULT_JP_TAX_FREE_RATE = 0.10).
+  const jpTaxFreeRate =
+    parsed.sourceRegion === "JP"
+      ? (input.jpTaxFreeRate ?? parsed.jpTaxFreeRate ?? null)
       : null;
 
   const now = Math.floor(Date.now() / 1000);
@@ -133,8 +156,9 @@ export function createItem(input: NewItemInput): TrackedItem {
     .prepare(
       `INSERT INTO tracked_items(
         id, url, host, product_code, region, source_country, eu_refund_rate,
-        sales_tax_rate, product_name, price_raw, currency, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        sales_tax_rate, jp_tax_free_rate, product_name, price_raw, currency,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -145,6 +169,7 @@ export function createItem(input: NewItemInput): TrackedItem {
       parsed.sourceCountry ?? null,
       euRefundRate,
       salesTaxRate,
+      jpTaxFreeRate,
       productName,
       input.priceRaw,
       currency,
@@ -172,17 +197,24 @@ export function updateItem(
   const nextPrice =
     patch.priceRaw !== undefined ? patch.priceRaw : existing.priceRaw;
 
-  // salesTaxRate only meaningful for US rows; ignore for EU.
+  // Each rate is region-gated: only US rows can patch salesTaxRate,
+  // only EU rows can patch euRefundRate, only JP rows can patch
+  // jpTaxFreeRate. Patches against the wrong region are silently
+  // dropped (the field stays at its existing value).
   const nextSalesTax =
     existing.region === "US" && patch.salesTaxRate !== undefined
       ? patch.salesTaxRate
       : (existing.salesTaxRate ?? null);
 
-  // euRefundRate only meaningful for EU rows; ignore for US.
   const nextEuRefund =
     existing.region === "EU" && patch.euRefundRate !== undefined
       ? patch.euRefundRate
       : (existing.euRefundRate ?? null);
+
+  const nextJpTaxFree =
+    existing.region === "JP" && patch.jpTaxFreeRate !== undefined
+      ? patch.jpTaxFreeRate
+      : (existing.jpTaxFreeRate ?? null);
 
   if (!nextName) {
     throw new ProductUrlParseError("Product name cannot be empty");
@@ -196,16 +228,27 @@ export function updateItem(
   if (nextEuRefund !== null && nextEuRefund !== undefined) {
     validateRate(nextEuRefund, "EU refund rate");
   }
+  if (nextJpTaxFree !== null && nextJpTaxFree !== undefined) {
+    validateRate(nextJpTaxFree, "JP tax-free rate");
+  }
 
   const now = Math.floor(Date.now() / 1000);
   getDb()
     .prepare(
       `UPDATE tracked_items
        SET product_name = ?, price_raw = ?, sales_tax_rate = ?,
-           eu_refund_rate = ?, updated_at = ?
+           eu_refund_rate = ?, jp_tax_free_rate = ?, updated_at = ?
        WHERE id = ?`,
     )
-    .run(nextName, nextPrice, nextSalesTax, nextEuRefund, now, id);
+    .run(
+      nextName,
+      nextPrice,
+      nextSalesTax,
+      nextEuRefund,
+      nextJpTaxFree,
+      now,
+      id,
+    );
 
   return getItem(id);
 }

@@ -9,11 +9,13 @@ export const dynamic = "force-dynamic";
 const NewItemSchema = z.object({
   url: z.string().trim().min(1).max(2048),
   productName: z.string().trim().min(1).max(128),
-  priceRaw: z.number().positive().max(1_000_000),
-  /** Fraction (0..1), only meaningful for US URLs; ignored for EU. */
+  priceRaw: z.number().positive().max(1_000_000_000),
+  /** Fraction (0..1), only meaningful for US URLs. */
   salesTaxRate: z.number().min(0).max(1).optional(),
-  /** Fraction (0..1), only meaningful for EU URLs; ignored for US. */
+  /** Fraction (0..1), only meaningful for EU URLs. */
   euRefundRate: z.number().min(0).max(1).optional(),
+  /** Fraction (0..1), only meaningful for JP URLs. */
+  jpTaxFreeRate: z.number().min(0).max(1).optional(),
 });
 
 export async function GET() {

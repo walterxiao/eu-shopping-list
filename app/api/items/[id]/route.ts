@@ -9,19 +9,21 @@ export const dynamic = "force-dynamic";
 const PatchSchema = z
   .object({
     productName: z.string().trim().min(1).max(128).optional(),
-    priceRaw: z.number().positive().max(1_000_000).optional(),
+    priceRaw: z.number().positive().max(1_000_000_000).optional(),
     salesTaxRate: z.number().min(0).max(1).optional(),
     euRefundRate: z.number().min(0).max(1).optional(),
+    jpTaxFreeRate: z.number().min(0).max(1).optional(),
   })
   .refine(
     (v) =>
       v.productName !== undefined ||
       v.priceRaw !== undefined ||
       v.salesTaxRate !== undefined ||
-      v.euRefundRate !== undefined,
+      v.euRefundRate !== undefined ||
+      v.jpTaxFreeRate !== undefined,
     {
       message:
-        "At least one of productName, priceRaw, salesTaxRate, euRefundRate is required",
+        "At least one of productName, priceRaw, salesTaxRate, euRefundRate, jpTaxFreeRate is required",
     },
   );
 

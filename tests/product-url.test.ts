@@ -146,6 +146,83 @@ describe("parseProductUrl — Rimowa Eurozone country subdomains", () => {
 });
 
 // ------------------------------------------------------------------
+// Hong Kong + Japan — new in v8
+// ------------------------------------------------------------------
+
+describe("parseProductUrl — Rimowa Japan and Hong Kong", () => {
+  // The actual URLs the user pasted as test fixtures.
+  const RIMOWA_JP =
+    "https://www.rimowa.com/jp/ja/luggage-collection-essential-trunk-plus/83280631.html";
+  const RIMOWA_HK =
+    "https://www.rimowa.com/hk/en/luggage/colour/black/trunk-plus/83280631.html";
+
+  it("parses /jp/ja/ as Japan with the default 10% tax-free rate", () => {
+    const p = parseProductUrl(RIMOWA_JP);
+    expect(p.host).toBe("www.rimowa.com");
+    expect(p.productCode).toBe("83280631");
+    expect(p.sourceRegion).toBe("JP");
+    expect(p.sourceCountry).toBe("jp");
+    expect(p.jpTaxFreeRate).toBe(0.1);
+    expect(p.euRefundRate).toBeUndefined();
+  });
+
+  it("parses /hk/en/ as Hong Kong with no refund/tax", () => {
+    const p = parseProductUrl(RIMOWA_HK);
+    expect(p.host).toBe("www.rimowa.com");
+    expect(p.productCode).toBe("83280631");
+    expect(p.sourceRegion).toBe("HK");
+    expect(p.sourceCountry).toBe("hk");
+    // HK has no refund and no tax-free.
+    expect(p.euRefundRate).toBeUndefined();
+    expect(p.jpTaxFreeRate).toBeUndefined();
+  });
+
+  it("parses bare /jp/ as Japan", () => {
+    const p = parseProductUrl(
+      "https://example.com/jp/men/cabin/12345678.html",
+    );
+    expect(p.sourceRegion).toBe("JP");
+    expect(p.jpTaxFreeRate).toBe(0.1);
+  });
+
+  it("parses /hk/zh/ as Hong Kong", () => {
+    const p = parseProductUrl(
+      "https://example.com/hk/zh/men/cabin/12345678.html",
+    );
+    expect(p.sourceRegion).toBe("HK");
+  });
+
+  it("parses /ja-jp/ hyphenated locale as Japan", () => {
+    const p = parseProductUrl(
+      "https://example.com/ja-jp/men/cabin/12345678.html",
+    );
+    expect(p.sourceRegion).toBe("JP");
+    expect(p.jpTaxFreeRate).toBe(0.1);
+  });
+
+  it("parses /jp-ja/ hyphenated locale as Japan", () => {
+    const p = parseProductUrl(
+      "https://example.com/jp-ja/men/cabin/12345678.html",
+    );
+    expect(p.sourceRegion).toBe("JP");
+  });
+
+  it("parses /en-hk/ hyphenated locale as Hong Kong", () => {
+    const p = parseProductUrl(
+      "https://example.com/en-hk/men/cabin/12345678.html",
+    );
+    expect(p.sourceRegion).toBe("HK");
+  });
+
+  it("parses /zh-hk/ hyphenated locale as Hong Kong", () => {
+    const p = parseProductUrl(
+      "https://example.com/zh-hk/men/cabin/12345678.html",
+    );
+    expect(p.sourceRegion).toBe("HK");
+  });
+});
+
+// ------------------------------------------------------------------
 // Moncler (alphanumeric SKU, hyphenated locale) — new in v5
 // ------------------------------------------------------------------
 
@@ -353,12 +430,6 @@ describe("parseProductUrl — explicit rejects", () => {
     expect(() =>
       parseProductUrl("https://www.rimowa.com/ch/de/cabin/92552634.html"),
     ).toThrow(/CHF/);
-  });
-
-  it("rejects /jp/ with a JPY reason", () => {
-    expect(() =>
-      parseProductUrl("https://www.rimowa.com/jp/ja/cabin/92552634.html"),
-    ).toThrow(/JPY/);
   });
 
   it("rejects /ca-en/ with a CAD reason", () => {

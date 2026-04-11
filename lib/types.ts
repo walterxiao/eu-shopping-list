@@ -8,8 +8,8 @@
  * stored region as a pure client-side step.
  */
 
-export type Region = "EU" | "US";
-export type Currency = "EUR" | "USD";
+export type Region = "EU" | "US" | "HK" | "JP";
+export type Currency = "EUR" | "USD" | "HKD" | "JPY";
 
 /** A single stored item — one URL + one manually entered price. */
 export interface TrackedItem {
@@ -31,15 +31,25 @@ export interface TrackedItem {
   /**
    * Approximate tourist VAT-refund rate for this item's country, used
    * to compute the net price a non-EU traveler actually pays after
-   * claiming the refund at the airport. EU only; undefined for US.
+   * claiming the refund at the airport. EU only; undefined for US/HK/JP.
    */
   euRefundRate?: number;
   /**
    * US sales tax rate ADDED on top of the sticker price at checkout.
    * Stored as a fraction (e.g. 0.0725 for 7.25% California). US only;
-   * undefined for EU items. Defaults to 0 if the user didn't specify.
+   * undefined for EU/HK/JP items. Defaults to 0 if the user didn't
+   * specify.
    */
   salesTaxRate?: number;
+  /**
+   * Japanese consumption-tax exemption rate SUBTRACTED from the sticker
+   * for non-resident tourists who claim tax-free shopping (免税) at
+   * checkout. Defaults to 0.10 (the full 10% consumption tax) for JP
+   * items; undefined for everything else. Unlike the EU refund this
+   * is applied at point of sale with no operator fees, so the full
+   * rate goes back.
+   */
+  jpTaxFreeRate?: number;
   /** User-entered display name. */
   productName: string;
   /** User-entered price in the region's native currency. */
@@ -55,15 +65,20 @@ export interface NewItemInput {
   productName: string;
   priceRaw: number;
   /**
-   * Sales tax rate as a fraction (US only; ignored for EU URLs).
+   * Sales tax rate as a fraction (US only; ignored for non-US URLs).
    * Defaults to DEFAULT_US_SALES_TAX_RATE if omitted.
    */
   salesTaxRate?: number;
   /**
-   * Tourist VAT refund rate as a fraction (EU only; ignored for US
+   * Tourist VAT refund rate as a fraction (EU only; ignored for non-EU
    * URLs). Overrides the country default derived from the URL.
    */
   euRefundRate?: number;
+  /**
+   * Japanese tourist tax-free rate as a fraction (JP only; ignored
+   * elsewhere). Defaults to DEFAULT_JP_TAX_FREE_RATE (0.10) if omitted.
+   */
+  jpTaxFreeRate?: number;
 }
 
 /** Request body for PATCH /api/items/:id — every field optional. */
@@ -72,6 +87,7 @@ export interface UpdateItemInput {
   priceRaw?: number;
   salesTaxRate?: number;
   euRefundRate?: number;
+  jpTaxFreeRate?: number;
 }
 
 /**
@@ -84,23 +100,36 @@ export interface ItemPrice {
   /** The underlying stored record. */
   item: TrackedItem;
   /**
-   * Sticker price normalized to EUR. For USD items this is
-   * `priceRaw * fxRate`; for EUR items it's just `priceRaw`. NaN if
-   * the FX rate is unavailable for a USD item.
+   * Sticker price normalized to EUR. For non-EUR items this is
+   * `priceRaw * fxRate(currency→EUR)`; for EUR items it's just
+   * `priceRaw`. NaN if the FX rate for the item's currency is
+   * unavailable.
    */
   rawEur: number;
   /**
-   * Net price (in EUR) that a non-EU tourist actually pays, all-in.
-   * For EU items this is `rawEur * (1 - euRefundRate)`; for US items
-   * it's `rawEur * (1 + salesTaxRate)`. NaN if `rawEur` is NaN.
+   * Net price (in EUR) that a non-EU/non-resident tourist actually
+   * pays, all-in.
+   *   - EU: rawEur * (1 - euRefundRate)
+   *   - US: rawEur * (1 + salesTaxRate)
+   *   - JP: rawEur * (1 - jpTaxFreeRate)
+   *   - HK: rawEur (no VAT, no sales tax — sticker IS the net)
+   * NaN if `rawEur` is NaN.
    */
   netEur: number;
   /**
    * Original USD sticker for US items — kept so the UI can show
    * both the dollar number and its EUR conversion side-by-side.
-   * Undefined for EU items.
+   * Undefined for non-USD items.
    */
   rawUsd?: number;
+  /**
+   * Original JPY sticker for JP items. Undefined for non-JPY items.
+   */
+  rawJpy?: number;
+  /**
+   * Original HKD sticker for HK items. Undefined for non-HKD items.
+   */
+  rawHkd?: number;
   /**
    * Signed difference between this row's `netEur` and the cheapest
    * US row's `netEur` in the same card, in EUR. Negative = this row
@@ -146,7 +175,12 @@ export interface ListItemsResponse {
 
 /** Response body for GET /api/fx. */
 export interface FxResponse {
+  /** USD → EUR conversion rate. */
   rate: number;
+  /** HKD → EUR conversion rate. */
+  hkdRate: number;
+  /** JPY → EUR conversion rate. */
+  jpyRate: number;
   source: "cache" | "live" | "stale" | "fallback";
   fetchedAt: string;
 }

@@ -25,52 +25,83 @@ export const DEFAULT_EU_REFUND_RATE = 0.12;
  */
 export const DEFAULT_US_SALES_TAX_RATE = 0.06;
 
+/**
+ * Default Japanese tourist tax-free rate applied to JP items that
+ * don't carry an explicit jpTaxFreeRate. Tourists who present a
+ * passport at checkout get the full 10% consumption tax exempted
+ * (免税 / "menzei") with no operator processing fees.
+ */
+export const DEFAULT_JP_TAX_FREE_RATE = 0.10;
+
+/**
+ * The compute layer takes the FX rates as a single object so the
+ * caller doesn't have to pass three separate scalar arguments. All
+ * three rates are conversions to EUR (the comparison baseline).
+ * Pass null to indicate the rates are unavailable — non-EUR rows
+ * will have NaN rawEur/netEur and be excluded from cheapest-row
+ * selection but still rendered.
+ */
+export interface FxRatesSnapshot {
+  usdToEur: number;
+  hkdToEur: number;
+  jpyToEur: number;
+}
+
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
 /**
  * Derive the EUR price representation for a single stored item given
- * the current FX rate.
+ * the current FX rates.
  *
- * For EU items:
- *   - `rawEur` = priceRaw (already EUR; sticker INCLUDES VAT)
- *   - `netEur` = rawEur * (1 - euRefundRate)  ← what a non-EU tourist
- *     actually pays after claiming the VAT refund at the airport
+ * Per-region math:
+ *   - EU: rawEur = priceRaw (already EUR; sticker INCLUDES VAT)
+ *         netEur = rawEur * (1 - euRefundRate)
+ *   - US: rawEur = priceRaw * usdToEur (sticker converted to EUR)
+ *         netEur = rawEur * (1 + salesTaxRate)
+ *   - JP: rawEur = priceRaw * jpyToEur
+ *         netEur = rawEur * (1 - jpTaxFreeRate)
+ *   - HK: rawEur = priceRaw * hkdToEur
+ *         netEur = rawEur          (no VAT, no sales tax — sticker
+ *                                    is the all-in number)
  *
- * For US items:
- *   - `rawUsd` = priceRaw (USD sticker; PRE-sales-tax in the US)
- *   - `rawEur` = rawUsd * fxRate (sticker converted to EUR)
- *   - `netEur` = rawEur * (1 + salesTaxRate)  ← what you actually
- *     pay at checkout (sticker + your local sales tax). Defaults
- *     to 0% sales tax if the user didn't specify, in which case
- *     `netEur === rawEur`.
+ * The "Net (EUR)" column is the apples-to-apples comparison number.
+ * Picking the lowest `netEur` across the card answers "where do I
+ * actually pay the least, all-in?".
  *
- * The "Net (EUR)" column is the apples-to-apples comparison number:
- * EU rows have it reduced by the tourist refund, US rows have it
- * increased by sales tax. Picking the lowest `netEur` across the
- * card answers "where do I actually pay the least, all-in?".
- *
- * If fxRate is null and the item is USD, both rawEur and netEur are
- * NaN — the UI still shows the raw USD number but excludes the row
- * from the cheapest-row comparison.
+ * If the FX snapshot is null and the item is non-EUR, both rawEur
+ * and netEur are NaN — the UI still shows the raw native number but
+ * excludes the row from the cheapest-row comparison.
  */
 function priceForItem(
   item: TrackedItem,
-  fxRate: number | null,
+  fx: FxRatesSnapshot | null,
 ): ItemPrice {
   if (item.currency === "USD") {
     const rawUsd = item.priceRaw;
-    const rawEur = fxRate != null ? round2(rawUsd * fxRate) : NaN;
-    // Fall back to the DEFAULT_US_SALES_TAX_RATE if the row has no
-    // explicit rate stored. The user can override per-item; storing
-    // 0 explicitly (as opposed to leaving the field NULL) disables
-    // sales tax for a specific row.
+    const rawEur = fx ? round2(rawUsd * fx.usdToEur) : NaN;
     const salesTaxRate = item.salesTaxRate ?? DEFAULT_US_SALES_TAX_RATE;
     const netEur = Number.isFinite(rawEur)
       ? round2(rawEur * (1 + salesTaxRate))
       : NaN;
     return { item, rawEur, netEur, rawUsd };
+  }
+  if (item.currency === "JPY") {
+    const rawJpy = item.priceRaw;
+    const rawEur = fx ? round2(rawJpy * fx.jpyToEur) : NaN;
+    const jpTaxFreeRate = item.jpTaxFreeRate ?? DEFAULT_JP_TAX_FREE_RATE;
+    const netEur = Number.isFinite(rawEur)
+      ? round2(rawEur * (1 - jpTaxFreeRate))
+      : NaN;
+    return { item, rawEur, netEur, rawJpy };
+  }
+  if (item.currency === "HKD") {
+    const rawHkd = item.priceRaw;
+    const rawEur = fx ? round2(rawHkd * fx.hkdToEur) : NaN;
+    // HK has no VAT and no sales tax — sticker IS the net price.
+    const netEur = rawEur;
+    return { item, rawEur, netEur, rawHkd };
   }
   // EU / EUR
   const rawEur = round2(item.priceRaw);
@@ -92,7 +123,7 @@ function priceForItem(
  */
 export function groupAndAnalyze(
   items: TrackedItem[],
-  fxRate: number | null,
+  fx: FxRatesSnapshot | null,
 ): ComparisonItem[] {
   const groups = new Map<string, TrackedItem[]>();
   for (const item of items) {
@@ -117,7 +148,7 @@ export function groupAndAnalyze(
     const productName =
       sorted.find((x) => x.productName?.trim())?.productName ?? productCode;
 
-    const prices = sorted.map((it) => priceForItem(it, fxRate));
+    const prices = sorted.map((it) => priceForItem(it, fx));
 
     // Attach a signed diff against the cheapest US row's net (the
     // user's baseline for "where would I actually pay less?").
@@ -158,7 +189,7 @@ export function groupAndAnalyze(
       productCode,
       productName,
       prices,
-      fxRate,
+      fxRate: fx?.usdToEur ?? null,
       cheapestRawItemId: cheapestRaw?.item.id,
       cheapestNetItemId: cheapestNet?.item.id,
     });

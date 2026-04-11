@@ -9,15 +9,17 @@ import {
 } from "react";
 import {
   DEFAULT_EU_REFUND_RATE,
+  DEFAULT_JP_TAX_FREE_RATE,
   DEFAULT_US_SALES_TAX_RATE,
 } from "@/lib/compute";
 import { fetchPriceFromUrl } from "@/lib/fetch-price-client";
 import { parseProductUrl, ProductUrlParseError } from "@/lib/product-url";
 import { formatPricePreview, parsePrice } from "@/lib/price-parse";
-import type { TrackedItem } from "@/lib/types";
+import type { Currency, Region, TrackedItem } from "@/lib/types";
 
 const DEFAULT_US_SALES_TAX_TEXT = String(DEFAULT_US_SALES_TAX_RATE * 100);
 const DEFAULT_EU_REFUND_TEXT = String(DEFAULT_EU_REFUND_RATE * 100);
+const DEFAULT_JP_TAX_FREE_TEXT = String(DEFAULT_JP_TAX_FREE_RATE * 100);
 
 interface Props {
   open: boolean;
@@ -29,6 +31,7 @@ interface Props {
     priceRaw: number,
     salesTaxRate?: number,
     euRefundRate?: number,
+    jpTaxFreeRate?: number,
   ) => Promise<void>;
 }
 
@@ -38,9 +41,10 @@ type ParseResult =
       kind: "ok";
       host: string;
       productCode: string;
-      region: "EU" | "US";
+      region: Region;
       country?: string;
       refundRate?: number;
+      jpTaxFreeRate?: number;
     }
   | { kind: "error"; reason: string };
 
@@ -55,11 +59,26 @@ function parseForBadge(url: string): ParseResult {
       region: p.sourceRegion,
       country: p.sourceCountry,
       refundRate: p.euRefundRate,
+      jpTaxFreeRate: p.jpTaxFreeRate,
     };
   } catch (err) {
     const reason =
       err instanceof ProductUrlParseError ? err.message : String(err);
     return { kind: "error", reason };
+  }
+}
+
+/** Map a parsed region to its native currency for display purposes. */
+function regionToCurrency(region: Region): Currency {
+  switch (region) {
+    case "US":
+      return "USD";
+    case "JP":
+      return "JPY";
+    case "HK":
+      return "HKD";
+    case "EU":
+      return "EUR";
   }
 }
 
@@ -85,6 +104,14 @@ export default function AddItemModal({ open, onClose, items, onAdd }: Props) {
    * "11" for Germany — but the user can override.
    */
   const [refundText, setRefundText] = useState(DEFAULT_EU_REFUND_TEXT);
+  /**
+   * Percent string for the JP tourist tax-free rate. Defaults to 10%
+   * (the full consumption tax) for any Japanese URL; user can
+   * override (e.g. set to 0 if shopping at a non-tax-free retailer).
+   */
+  const [jpTaxFreeText, setJpTaxFreeText] = useState(
+    DEFAULT_JP_TAX_FREE_TEXT,
+  );
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
   /**
@@ -106,6 +133,7 @@ export default function AddItemModal({ open, onClose, items, onAdd }: Props) {
       setPriceText("");
       setSalesTaxText(DEFAULT_US_SALES_TAX_TEXT);
       setRefundText(DEFAULT_EU_REFUND_TEXT);
+      setJpTaxFreeText(DEFAULT_JP_TAX_FREE_TEXT);
       setServerError(null);
       setSubmitting(false);
       setFetching(false);
@@ -121,14 +149,19 @@ export default function AddItemModal({ open, onClose, items, onAdd }: Props) {
 
   /**
    * "Fetch from page" button handler. Calls /api/extract-price with
-   * the current URL, and on success populates priceText with the
-   * extracted number. If the URL has parsed as a specific region (US
-   * or EU), we reject the result when the extracted currency doesn't
-   * match — otherwise we'd silently store a USD price as if it were
-   * EUR.
+   * the current URL and populates priceText with the extracted number
+   * on success. The extractor only supports EUR/USD JSON-LD, so for
+   * JP and HK URLs (JPY/HKD) we don't even bother making the request
+   * — those retailers' prices have to be entered manually.
    */
   async function handleFetchPrice() {
     if (parseResult.kind !== "ok") return;
+    if (isJp || isHk) {
+      setFetchError(
+        "Auto-fetch only supports EUR/USD pages — paste the price manually",
+      );
+      return;
+    }
     setFetching(true);
     setFetchError(null);
     try {
@@ -160,7 +193,10 @@ export default function AddItemModal({ open, onClose, items, onAdd }: Props) {
   const parseResult = useMemo(() => parseForBadge(url), [url]);
   const isUs = parseResult.kind === "ok" && parseResult.region === "US";
   const isEu = parseResult.kind === "ok" && parseResult.region === "EU";
-  const currency: "EUR" | "USD" = isUs ? "USD" : "EUR";
+  const isJp = parseResult.kind === "ok" && parseResult.region === "JP";
+  const isHk = parseResult.kind === "ok" && parseResult.region === "HK";
+  const currency: Currency =
+    parseResult.kind === "ok" ? regionToCurrency(parseResult.region) : "EUR";
   const parsedPrice = useMemo(() => parsePrice(priceText), [priceText]);
 
   /**
@@ -183,6 +219,10 @@ export default function AddItemModal({ open, onClose, items, onAdd }: Props) {
     () => parsePercentFraction(refundText),
     [refundText],
   );
+  const parsedJpTaxFreeFraction = useMemo<number | null>(
+    () => parsePercentFraction(jpTaxFreeText),
+    [jpTaxFreeText],
+  );
 
   /**
    * Auto-populate the refund % field from the URL's country code
@@ -195,6 +235,18 @@ export default function AddItemModal({ open, onClose, items, onAdd }: Props) {
     if (parseResult.region !== "EU") return;
     const rate = parseResult.refundRate ?? DEFAULT_EU_REFUND_RATE;
     setRefundText(String(Math.round(rate * 100 * 100) / 100));
+  }, [parseResult]);
+
+  /**
+   * Auto-populate the JP tax-free % field from the URL whenever it
+   * resolves to Japan. The default is 10% (DEFAULT_JP_TAX_FREE_RATE);
+   * the user can override per item.
+   */
+  useEffect(() => {
+    if (parseResult.kind !== "ok") return;
+    if (parseResult.region !== "JP") return;
+    const rate = parseResult.jpTaxFreeRate ?? DEFAULT_JP_TAX_FREE_RATE;
+    setJpTaxFreeText(String(Math.round(rate * 100 * 100) / 100));
   }, [parseResult]);
 
   // Auto-suggest the product name when the pasted URL's (host, code)
@@ -223,6 +275,7 @@ export default function AddItemModal({ open, onClose, items, onAdd }: Props) {
     parsedPrice !== null &&
     (!isUs || parsedSalesTaxFraction !== null) &&
     (!isEu || parsedRefundFraction !== null) &&
+    (!isJp || parsedJpTaxFreeFraction !== null) &&
     !submitting;
 
   async function handleSubmit(e: FormEvent) {
@@ -235,11 +288,12 @@ export default function AddItemModal({ open, onClose, items, onAdd }: Props) {
         url.trim(),
         productName.trim(),
         parsedPrice,
-        // Only send the sales tax for US URLs and the refund rate for
-        // EU URLs. The server ignores them in the wrong region but no
-        // point round-tripping extra noise.
+        // Per-region rate fields. Each is sent only when the URL
+        // matches the relevant region — the server gates them too
+        // but no point round-tripping irrelevant noise.
         isUs ? (parsedSalesTaxFraction ?? 0) : undefined,
         isEu ? (parsedRefundFraction ?? 0) : undefined,
+        isJp ? (parsedJpTaxFreeFraction ?? 0) : undefined,
       );
       onClose();
     } catch (err) {
@@ -353,16 +407,26 @@ export default function AddItemModal({ open, onClose, items, onAdd }: Props) {
           <div>
             <div className="mb-1 flex items-baseline justify-between gap-2">
               <label className="block text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                {isUs ? "Sticker (USD, pre-tax)" : `Price (${currency})`}
+                {isUs
+                  ? "Sticker (USD, pre-tax)"
+                  : isJp
+                    ? "Sticker (JPY, tax-included)"
+                    : isHk
+                      ? "Sticker (HKD)"
+                      : `Price (${currency})`}
               </label>
               <button
                 type="button"
                 onClick={handleFetchPrice}
-                disabled={parseResult.kind !== "ok" || fetching}
+                disabled={
+                  parseResult.kind !== "ok" || fetching || isJp || isHk
+                }
                 title={
                   parseResult.kind !== "ok"
                     ? "Paste a valid product URL first"
-                    : "Fetch the price from the retailer page"
+                    : isJp || isHk
+                      ? "Auto-fetch supports EUR/USD only — paste manually"
+                      : "Fetch the price from the retailer page"
                 }
                 className="text-xs font-medium text-blue-600 underline hover:text-blue-800 disabled:cursor-not-allowed disabled:text-neutral-300 disabled:no-underline"
               >
@@ -374,7 +438,15 @@ export default function AddItemModal({ open, onClose, items, onAdd }: Props) {
               inputMode="decimal"
               value={priceText}
               onChange={(e) => setPriceText(e.target.value)}
-              placeholder={currency === "EUR" ? "€1.190,00" : "$1,190.00"}
+              placeholder={
+                currency === "EUR"
+                  ? "€1.190,00"
+                  : currency === "USD"
+                    ? "$1,190.00"
+                    : currency === "JPY"
+                      ? "¥150,000"
+                      : "HK$9,500"
+              }
               className="w-full rounded border border-neutral-300 px-3 py-2 text-sm focus:border-neutral-500 focus:outline-none"
               aria-label="Price"
             />
@@ -468,6 +540,51 @@ export default function AddItemModal({ open, onClose, items, onAdd }: Props) {
                 )}
               </div>
             </div>
+          )}
+
+          {isJp && (
+            <div>
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                Tourist tax-free % (免税)
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={jpTaxFreeText}
+                  onChange={(e) => setJpTaxFreeText(e.target.value)}
+                  placeholder={DEFAULT_JP_TAX_FREE_TEXT}
+                  className="w-24 rounded border border-neutral-300 px-3 py-2 text-sm focus:border-neutral-500 focus:outline-none"
+                  aria-label="Japanese tax-free percent"
+                />
+                <span className="text-sm text-neutral-500">%</span>
+                {parsedJpTaxFreeFraction === null ? (
+                  <span className="text-xs text-red-600">
+                    Enter a number 0–100 (try 10)
+                  </span>
+                ) : parsedPrice !== null && parsedJpTaxFreeFraction > 0 ? (
+                  <span className="text-xs text-neutral-500">
+                    after tax-free ≈{" "}
+                    {formatPricePreview(
+                      parsedPrice * (1 - parsedJpTaxFreeFraction),
+                      "JPY",
+                    )}
+                  </span>
+                ) : (
+                  <span className="text-xs text-neutral-500">
+                    Default {DEFAULT_JP_TAX_FREE_TEXT}% (full consumption
+                    tax exemption at checkout). Set to 0 if you can&apos;t
+                    claim it.
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+
+          {isHk && (
+            <p className="text-xs text-neutral-500">
+              Hong Kong has no VAT or sales tax — sticker IS the net price.
+            </p>
           )}
 
           {serverError && (

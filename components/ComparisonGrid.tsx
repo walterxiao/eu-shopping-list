@@ -3,18 +3,22 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   DEFAULT_EU_REFUND_RATE,
+  DEFAULT_JP_TAX_FREE_RATE,
   DEFAULT_US_SALES_TAX_RATE,
 } from "@/lib/compute";
 import { parseProductUrl, ProductUrlParseError } from "@/lib/product-url";
 import { formatPricePreview, parsePrice } from "@/lib/price-parse";
 import type {
   ComparisonItem,
+  Currency,
   ItemPrice,
+  Region,
   TrackedItem,
 } from "@/lib/types";
 
 const DEFAULT_US_SALES_TAX_TEXT = String(DEFAULT_US_SALES_TAX_RATE * 100);
 const DEFAULT_EU_REFUND_TEXT = String(DEFAULT_EU_REFUND_RATE * 100);
+const DEFAULT_JP_TAX_FREE_TEXT = String(DEFAULT_JP_TAX_FREE_RATE * 100);
 
 /** Parse a percent string like "7.25" or "12" into a fraction 0..1,
  *  or null if the input isn't a valid percent. Empty string → 0%. */
@@ -45,6 +49,7 @@ interface Props {
     priceRaw: number,
     salesTaxRate?: number,
     euRefundRate?: number,
+    jpTaxFreeRate?: number,
   ) => Promise<void>;
   onUpdate: (
     id: string,
@@ -53,6 +58,7 @@ interface Props {
       priceRaw?: number;
       salesTaxRate?: number;
       euRefundRate?: number;
+      jpTaxFreeRate?: number;
     },
   ) => Promise<void>;
   onRemove: (id: string) => Promise<void>;
@@ -73,6 +79,38 @@ function usd(n: number): string {
   }).format(n);
 }
 
+function jpy(n: number): string {
+  // Japanese yen has no fractional unit; round and skip decimals.
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "JPY",
+    maximumFractionDigits: 0,
+    minimumFractionDigits: 0,
+  }).format(n);
+}
+
+function hkd(n: number): string {
+  return new Intl.NumberFormat("en-HK", {
+    style: "currency",
+    currency: "HKD",
+  }).format(n);
+}
+
+/** Render `priceRaw` in its native currency for display in the
+ *  Sticker column. */
+function nativeMoney(n: number, currency: Currency): string {
+  switch (currency) {
+    case "USD":
+      return usd(n);
+    case "JPY":
+      return jpy(n);
+    case "HKD":
+      return hkd(n);
+    case "EUR":
+      return eur(n);
+  }
+}
+
 function shortHost(host: string): string {
   return host.replace(/^www\./, "");
 }
@@ -80,6 +118,8 @@ function shortHost(host: string): string {
 function regionLabel(price: ItemPrice): string {
   const { region, sourceCountry } = price.item;
   if (region === "US") return "US";
+  if (region === "JP") return "JP";
+  if (region === "HK") return "HK";
   if (sourceCountry) return `EU · ${sourceCountry.toUpperCase()}`;
   return "EU";
 }
@@ -112,6 +152,8 @@ function PriceRow({
   const { item, rawEur, netEur, rawUsd } = price;
   const isUs = item.region === "US";
   const isEu = item.region === "EU";
+  const isJp = item.region === "JP";
+  const isHk = item.region === "HK";
   const [editing, setEditing] = useState(false);
   const [priceText, setPriceText] = useState(String(item.priceRaw));
   /**
@@ -136,6 +178,16 @@ function PriceRow({
       ? formatRatePercent(item.euRefundRate)
       : DEFAULT_EU_REFUND_TEXT,
   );
+  /**
+   * Japanese tax-free percent string; only used for JP rows. Defaults
+   * to 10% (full consumption-tax exemption) if the row has no
+   * explicit value stored.
+   */
+  const [jpTaxFreeText, setJpTaxFreeText] = useState(
+    item.jpTaxFreeRate !== undefined
+      ? formatRatePercent(item.jpTaxFreeRate)
+      : DEFAULT_JP_TAX_FREE_TEXT,
+  );
   const [busy, setBusy] = useState(false);
 
   const parsedEdit = useMemo(() => parsePrice(priceText), [priceText]);
@@ -147,17 +199,23 @@ function PriceRow({
     () => (isEu ? parsePercentFraction(refundText) : null),
     [isEu, refundText],
   );
+  const parsedJpTaxFree = useMemo<number | null>(
+    () => (isJp ? parsePercentFraction(jpTaxFreeText) : null),
+    [isJp, jpTaxFreeText],
+  );
 
   async function handleSave() {
     if (parsedEdit === null) return;
     if (isUs && parsedSalesTax === null) return;
     if (isEu && parsedRefund === null) return;
+    if (isJp && parsedJpTaxFree === null) return;
     setBusy(true);
     try {
       await onUpdate(item.id, {
         priceRaw: parsedEdit,
         ...(isUs ? { salesTaxRate: parsedSalesTax ?? 0 } : {}),
         ...(isEu ? { euRefundRate: parsedRefund ?? 0 } : {}),
+        ...(isJp ? { jpTaxFreeRate: parsedJpTaxFree ?? 0 } : {}),
       });
       setEditing(false);
     } finally {
@@ -179,11 +237,13 @@ function PriceRow({
   /**
    * Right-column "Adjustment" cell: shows the signed delta between
    * sticker and net for this row.
+   *   US rows  → "+6% tax" (default) / "+0% tax" (muted)
    *   EU rows  → "−12% refund" (fallback to app default if the row
    *              has no explicit rate, matching what compute.ts
    *              renders in the Net column)
-   *   US rows  → "+6% tax" (default) / "+8.25% tax" (explicit) /
-   *              "+0% tax" (explicit zero, muted gray)
+   *   JP rows  → "−10% tax-free" (full consumption-tax exemption
+   *              for tourists at checkout)
+   *   HK rows  → "—" (no VAT, no sales tax — sticker IS the net)
    */
   function renderAdjustmentCell(): React.ReactNode {
     if (isUs) {
@@ -193,9 +253,17 @@ function PriceRow({
       }
       return `+${formatRatePercent(rate)}% tax`;
     }
-    // EU row: fall back to DEFAULT_EU_REFUND_RATE for legacy rows so
-    // the cell doesn't show "—" while compute is silently applying
-    // the default to the Net column.
+    if (isJp) {
+      const rate = item.jpTaxFreeRate ?? DEFAULT_JP_TAX_FREE_RATE;
+      if (rate === 0) {
+        return <span className="text-neutral-400">−0% tax-free</span>;
+      }
+      return `−${formatRatePercent(rate)}% tax-free`;
+    }
+    if (isHk) {
+      return <span className="text-neutral-400">duty-free</span>;
+    }
+    // EU row: fall back to DEFAULT_EU_REFUND_RATE for legacy rows.
     const rate = item.euRefundRate ?? DEFAULT_EU_REFUND_RATE;
     if (rate === 0) {
       return <span className="text-neutral-400">−0% refund</span>;
@@ -240,10 +308,11 @@ function PriceRow({
           </div>
         ) : (
           <div className={isCheapestRaw ? "font-semibold" : ""}>
-            {item.currency === "USD" ? usd(item.priceRaw) : eur(item.priceRaw)}
-            {rawUsd !== undefined && Number.isFinite(rawEur) && (
+            {nativeMoney(item.priceRaw, item.currency)}
+            {item.currency !== "EUR" && Number.isFinite(rawEur) && (
               <div className="text-[11px] text-neutral-500">
-                ≈ {eur(rawEur)} pre-tax
+                ≈ {eur(rawEur)}
+                {isUs && " pre-tax"}
               </div>
             )}
           </div>
@@ -275,6 +344,19 @@ function PriceRow({
               aria-label="Tourist refund percent"
             />
             <span>% refund</span>
+          </div>
+        ) : editing && isJp ? (
+          <div className="flex items-center gap-1">
+            <input
+              type="text"
+              inputMode="decimal"
+              value={jpTaxFreeText}
+              onChange={(e) => setJpTaxFreeText(e.target.value)}
+              placeholder={DEFAULT_JP_TAX_FREE_TEXT}
+              className="w-14 rounded border border-neutral-300 px-2 py-1 text-xs"
+              aria-label="Japanese tax-free percent"
+            />
+            <span>% tax-free</span>
           </div>
         ) : (
           renderAdjustmentCell()
@@ -328,7 +410,8 @@ function PriceRow({
                   busy ||
                   parsedEdit === null ||
                   (isUs && parsedSalesTax === null) ||
-                  (isEu && parsedRefund === null)
+                  (isEu && parsedRefund === null) ||
+                  (isJp && parsedJpTaxFree === null)
                 }
                 className="rounded bg-neutral-900 px-2 py-1 text-xs font-medium text-white hover:bg-neutral-800 disabled:opacity-50"
               >
@@ -348,6 +431,11 @@ function PriceRow({
                       ? formatRatePercent(item.euRefundRate)
                       : DEFAULT_EU_REFUND_TEXT,
                   );
+                  setJpTaxFreeText(
+                    item.jpTaxFreeRate !== undefined
+                      ? formatRatePercent(item.jpTaxFreeRate)
+                      : DEFAULT_JP_TAX_FREE_TEXT,
+                  );
                 }}
                 className="rounded px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-100"
               >
@@ -365,6 +453,11 @@ function PriceRow({
             {isEu && parsedRefund === null && (
               <span className="text-[11px] text-red-600">
                 refund 0–100%
+              </span>
+            )}
+            {isJp && parsedJpTaxFree === null && (
+              <span className="text-[11px] text-red-600">
+                tax-free 0–100%
               </span>
             )}
           </div>
@@ -414,6 +507,9 @@ function AddAnotherRegionForm({
     DEFAULT_US_SALES_TAX_TEXT,
   );
   const [refundText, setRefundText] = useState(DEFAULT_EU_REFUND_TEXT);
+  const [jpTaxFreeText, setJpTaxFreeText] = useState(
+    DEFAULT_JP_TAX_FREE_TEXT,
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -446,15 +542,22 @@ function AddAnotherRegionForm({
         it.region === parseResult.sourceRegion,
     );
 
-  const isUs =
-    parseResult &&
-    "sourceRegion" in parseResult &&
-    parseResult.sourceRegion === "US";
-  const isEu =
-    parseResult &&
-    "sourceRegion" in parseResult &&
-    parseResult.sourceRegion === "EU";
-  const currency: "EUR" | "USD" = isUs ? "USD" : "EUR";
+  const region: Region | null =
+    parseResult && "sourceRegion" in parseResult
+      ? parseResult.sourceRegion
+      : null;
+  const isUs = region === "US";
+  const isEu = region === "EU";
+  const isJp = region === "JP";
+  const isHk = region === "HK";
+  const currency: Currency =
+    region === "US"
+      ? "USD"
+      : region === "JP"
+        ? "JPY"
+        : region === "HK"
+          ? "HKD"
+          : "EUR";
   const parsedPrice = useMemo(() => parsePrice(priceText), [priceText]);
 
   const parsedSalesTax = useMemo<number | null>(
@@ -465,6 +568,10 @@ function AddAnotherRegionForm({
     () => (isEu ? parsePercentFraction(refundText) : null),
     [isEu, refundText],
   );
+  const parsedJpTaxFree = useMemo<number | null>(
+    () => (isJp ? parsePercentFraction(jpTaxFreeText) : null),
+    [isJp, jpTaxFreeText],
+  );
 
   // Auto-fill the refund % from the URL's country when the user
   // pastes an EU URL. Pre-fills "12" for IT, "11" for DE, etc.
@@ -473,6 +580,13 @@ function AddAnotherRegionForm({
     const rate = parseResult.euRefundRate ?? DEFAULT_EU_REFUND_RATE;
     setRefundText(formatRatePercent(rate));
   }, [isEu, parseResult]);
+
+  // Auto-fill the JP tax-free % when the user pastes a JP URL.
+  useEffect(() => {
+    if (!isJp || !parseResult || !("jpTaxFreeRate" in parseResult)) return;
+    const rate = parseResult.jpTaxFreeRate ?? DEFAULT_JP_TAX_FREE_RATE;
+    setJpTaxFreeText(formatRatePercent(rate));
+  }, [isJp, parseResult]);
 
   const mismatchReason = !parseResult
     ? null
@@ -495,6 +609,7 @@ function AddAnotherRegionForm({
     parsedPrice !== null &&
     (!isUs || parsedSalesTax !== null) &&
     (!isEu || parsedRefund !== null) &&
+    (!isJp || parsedJpTaxFree !== null) &&
     !submitting;
 
   async function handleSubmit(e: FormEvent) {
@@ -509,11 +624,13 @@ function AddAnotherRegionForm({
         parsedPrice,
         isUs ? (parsedSalesTax ?? 0) : undefined,
         isEu ? (parsedRefund ?? 0) : undefined,
+        isJp ? (parsedJpTaxFree ?? 0) : undefined,
       );
       setUrl("");
       setPriceText("");
       setSalesTaxText(DEFAULT_US_SALES_TAX_TEXT);
       setRefundText(DEFAULT_EU_REFUND_TEXT);
+      setJpTaxFreeText(DEFAULT_JP_TAX_FREE_TEXT);
       setExpanded(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -550,6 +667,7 @@ function AddAnotherRegionForm({
             setPriceText("");
             setSalesTaxText(DEFAULT_US_SALES_TAX_TEXT);
             setRefundText(DEFAULT_EU_REFUND_TEXT);
+            setJpTaxFreeText(DEFAULT_JP_TAX_FREE_TEXT);
             setError(null);
           }}
           className="text-xs text-neutral-400 hover:text-neutral-700"
@@ -571,7 +689,15 @@ function AddAnotherRegionForm({
           inputMode="decimal"
           value={priceText}
           onChange={(e) => setPriceText(e.target.value)}
-          placeholder={currency === "EUR" ? "€1.190,00" : "$1,190.00"}
+          placeholder={
+            currency === "EUR"
+              ? "€1.190,00"
+              : currency === "USD"
+                ? "$1,190.00"
+                : currency === "JPY"
+                  ? "¥150,000"
+                  : "HK$9,500"
+          }
           className="w-28 rounded border border-neutral-300 px-2 py-1 text-xs focus:border-neutral-500 focus:outline-none"
           aria-label="Price"
         />
@@ -606,6 +732,23 @@ function AddAnotherRegionForm({
             <span className="text-[11px] text-neutral-500">% refund</span>
           </>
         )}
+        {isJp && (
+          <>
+            <input
+              type="text"
+              inputMode="decimal"
+              value={jpTaxFreeText}
+              onChange={(e) => setJpTaxFreeText(e.target.value)}
+              placeholder={DEFAULT_JP_TAX_FREE_TEXT}
+              className="w-14 rounded border border-neutral-300 px-2 py-1 text-xs focus:border-neutral-500 focus:outline-none"
+              aria-label="Japanese tax-free percent"
+            />
+            <span className="text-[11px] text-neutral-500">% tax-free</span>
+          </>
+        )}
+        {isHk && (
+          <span className="text-[11px] text-neutral-500">duty-free</span>
+        )}
         <button
           type="submit"
           disabled={!canSubmit}
@@ -625,6 +768,11 @@ function AddAnotherRegionForm({
       {isEu && parsedRefund === null && refundText.trim() !== "" && (
         <p className="text-[11px] text-red-600">
           Refund rate must be 0–100 (e.g. 12)
+        </p>
+      )}
+      {isJp && parsedJpTaxFree === null && jpTaxFreeText.trim() !== "" && (
+        <p className="text-[11px] text-red-600">
+          Tax-free rate must be 0–100 (e.g. 10)
         </p>
       )}
       {error && <p className="text-[11px] text-red-600">{error}</p>}
@@ -794,12 +942,15 @@ export default function ComparisonGrid({
       <p className="text-xs text-neutral-500">
         The <strong>Net (EUR)</strong> column is the apples-to-apples
         comparison number. <strong>EU rows</strong>: sticker minus an
-        approximate Global Blue / Planet tourist refund (~10–17%
-        depending on country, varies by operator and purchase amount).
-        <strong> US rows</strong>: sticker plus the sales tax rate you
-        entered for that item (defaults to 0%). The cheapest-Net row is
-        highlighted green and is the right number to compare across
-        regions.
+        approximate Global Blue / Planet tourist refund (~10–17%,
+        varies by country and operator). <strong>US rows</strong>:
+        sticker plus the sales tax rate you entered for that item
+        (default 6% Northern VA). <strong>JP rows</strong>: sticker
+        minus the 10% consumption-tax exemption available to
+        passport-holding tourists at checkout. <strong>HK rows</strong>:
+        sticker as-is — Hong Kong has no VAT or sales tax. The
+        cheapest-Net row is highlighted green and is the right
+        number to compare across regions.
       </p>
     </section>
   );

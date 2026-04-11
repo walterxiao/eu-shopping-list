@@ -12,6 +12,7 @@ function mk(partial: Partial<TrackedItem>): TrackedItem {
     sourceCountry: partial.sourceCountry,
     euRefundRate: partial.euRefundRate,
     salesTaxRate: partial.salesTaxRate,
+    jpTaxFreeRate: partial.jpTaxFreeRate,
     productName: partial.productName ?? "Original Cabin — Black",
     priceRaw: partial.priceRaw ?? 1350,
     currency: partial.currency ?? "EUR",
@@ -25,14 +26,26 @@ function findRow(card: ComparisonItem, id: string) {
   return row;
 }
 
+/**
+ * Test FX snapshot. Most tests only care about USD→EUR (most pre-v8
+ * tests are US/EU only), but `groupAndAnalyze` now takes the full
+ * three-currency snapshot, so we hand it plausible values for
+ * HKD/JPY too. The HK and JP tests below construct different
+ * snapshots when they need specific math.
+ *
+ * Numbers reflect rough late-2025 rates: 1 HKD ≈ 0.117 EUR,
+ * 1 JPY ≈ 0.0061 EUR (i.e. ¥150 ≈ €0.92, HK$10 ≈ €1.17).
+ */
+const FX = { usdToEur: 0.92, hkdToEur: 0.117, jpyToEur: 0.0061 };
+
 describe("groupAndAnalyze", () => {
   it("returns an empty list for empty input", () => {
-    expect(groupAndAnalyze([], 0.92)).toEqual([]);
+    expect(groupAndAnalyze([], FX)).toEqual([]);
   });
 
   it("returns a single-region card when only one item exists", () => {
     const items = [mk({ id: "only", region: "EU" })];
-    const res = groupAndAnalyze(items, 0.92);
+    const res = groupAndAnalyze(items, FX);
     expect(res).toHaveLength(1);
     expect(res[0].prices).toHaveLength(1);
     expect(res[0].cheapestRawItemId).toBe("only");
@@ -44,7 +57,7 @@ describe("groupAndAnalyze", () => {
       mk({ id: "it", region: "EU", sourceCountry: "it", euRefundRate: 0.12, priceRaw: 1190 }),
       mk({ id: "us", region: "US", currency: "USD", priceRaw: 1100 }),
     ];
-    const res = groupAndAnalyze(items, 0.92);
+    const res = groupAndAnalyze(items, FX);
     expect(res).toHaveLength(1);
     const card = res[0];
     expect(card.prices).toHaveLength(2);
@@ -78,7 +91,7 @@ describe("groupAndAnalyze", () => {
       mk({ id: "fr", host: "www.moncler.com", productCode: "L1", region: "EU", sourceCountry: "fr", euRefundRate: 0.12, priceRaw: 1300 }),
       mk({ id: "us", host: "www.moncler.com", productCode: "L1", region: "US", currency: "USD", priceRaw: 1450 }),
     ];
-    const res = groupAndAnalyze(items, 0.92);
+    const res = groupAndAnalyze(items, FX);
     expect(res).toHaveLength(1);
     const card = res[0];
     expect(card.prices).toHaveLength(4);
@@ -110,7 +123,7 @@ describe("groupAndAnalyze", () => {
     const items = [
       mk({ id: "pan", region: "EU", sourceCountry: undefined, euRefundRate: undefined, priceRaw: 1000 }),
     ];
-    const res = groupAndAnalyze(items, 0.92);
+    const res = groupAndAnalyze(items, FX);
     const row = findRow(res[0], "pan");
     expect(row.netEur).toBeCloseTo(880, 2);
   });
@@ -122,7 +135,7 @@ describe("groupAndAnalyze", () => {
       mk({ id: "b-eu", productCode: "B", region: "EU", priceRaw: 2000 }),
       mk({ id: "b-us", productCode: "B", region: "US", currency: "USD", priceRaw: 1800 }),
     ];
-    const res = groupAndAnalyze(items, 0.92);
+    const res = groupAndAnalyze(items, FX);
     expect(res).toHaveLength(2);
     expect(res.every((c) => c.prices.length === 2)).toBe(true);
   });
@@ -145,7 +158,7 @@ describe("groupAndAnalyze", () => {
         priceRaw: 1100,
       }),
     ];
-    const res = groupAndAnalyze(items, 0.92);
+    const res = groupAndAnalyze(items, FX);
     expect(res).toHaveLength(2);
     const hosts = res.map((c) => c.host).sort();
     expect(hosts).toEqual(["www.moncler.com", "www.rimowa.com"]);
@@ -173,7 +186,7 @@ describe("groupAndAnalyze", () => {
     const items = [
       mk({ id: "us", region: "US", currency: "USD", priceRaw: 1300 }),
     ];
-    const res = groupAndAnalyze(items, 0.92);
+    const res = groupAndAnalyze(items, FX);
     const us = findRow(res[0], "us");
     expect(us.rawUsd).toBe(1300);
     expect(us.rawEur).toBeCloseTo(1196, 2);
@@ -183,11 +196,11 @@ describe("groupAndAnalyze", () => {
     // Explicit rates on the item win over the default 0.12.
     const it = groupAndAnalyze(
       [mk({ id: "it", region: "EU", sourceCountry: "it", euRefundRate: 0.12, priceRaw: 1000 })],
-      0.92,
+      FX,
     );
     const de = groupAndAnalyze(
       [mk({ id: "de", region: "EU", sourceCountry: "de", euRefundRate: 0.11, priceRaw: 1000 })],
-      0.92,
+      FX,
     );
     const itNet = findRow(it[0], "it").netEur;
     const deNet = findRow(de[0], "de").netEur;
@@ -214,7 +227,7 @@ describe("groupAndAnalyze", () => {
         // salesTaxRate omitted → undefined → default 6% applied
       }),
     ];
-    const res = groupAndAnalyze(items, 0.92);
+    const res = groupAndAnalyze(items, FX);
     const us = findRow(res[0], "us");
     expect(us.rawEur).toBeCloseTo(920, 2);
     // 920 * 1.06 = 975.20
@@ -234,7 +247,7 @@ describe("groupAndAnalyze", () => {
         salesTaxRate: 0,
       }),
     ];
-    const res = groupAndAnalyze(items, 0.92);
+    const res = groupAndAnalyze(items, FX);
     const us = findRow(res[0], "us");
     expect(us.rawEur).toBeCloseTo(920, 2);
     expect(us.netEur).toBeCloseTo(920, 2);
@@ -250,7 +263,7 @@ describe("groupAndAnalyze", () => {
         salesTaxRate: 0.0725, // 7.25% California rate
       }),
     ];
-    const res = groupAndAnalyze(items, 0.92);
+    const res = groupAndAnalyze(items, FX);
     const us = findRow(res[0], "us-ca");
     expect(us.rawEur).toBeCloseTo(920, 2);
     // 920 × 1.0725 = 986.70
@@ -277,7 +290,7 @@ describe("groupAndAnalyze", () => {
         salesTaxRate: 0.0725,
       }),
     ];
-    const res = groupAndAnalyze(items, 0.92);
+    const res = groupAndAnalyze(items, FX);
     const card = res[0];
     expect(findRow(card, "it").netEur).toBeCloseTo(880, 2);
     expect(findRow(card, "us").netEur).toBeCloseTo(1085.37, 1);
@@ -308,7 +321,7 @@ describe("groupAndAnalyze", () => {
         salesTaxRate: 0.10, // 10% sales tax
       }),
     ];
-    const res = groupAndAnalyze(items, 0.92);
+    const res = groupAndAnalyze(items, FX);
     expect(res[0].cheapestNetItemId).toBe("it");
   });
 
@@ -323,7 +336,7 @@ describe("groupAndAnalyze", () => {
         salesTaxRate: 0.99,
       }),
     ];
-    const res = groupAndAnalyze(items, 0.92);
+    const res = groupAndAnalyze(items, FX);
     const eu = findRow(res[0], "eu");
     // Default refund 0.12 applied; salesTaxRate ignored.
     expect(eu.netEur).toBeCloseTo(880, 2);
@@ -360,7 +373,7 @@ describe("groupAndAnalyze", () => {
         salesTaxRate: 0.0725,
       }),
     ];
-    const res = groupAndAnalyze(items, 0.92);
+    const res = groupAndAnalyze(items, FX);
     const card = res[0];
 
     const it = findRow(card, "it");
@@ -394,7 +407,7 @@ describe("groupAndAnalyze", () => {
         salesTaxRate: 0, // net 920
       }),
     ];
-    const res = groupAndAnalyze(items, 0.92);
+    const res = groupAndAnalyze(items, FX);
     const it = findRow(res[0], "it");
     // 1320 - 920 = +400
     expect(it.diffVsUsEur).toBeCloseTo(400, 2);
@@ -406,7 +419,7 @@ describe("groupAndAnalyze", () => {
       mk({ id: "it", region: "EU", sourceCountry: "it", euRefundRate: 0.12, priceRaw: 1000 }),
       mk({ id: "de", region: "EU", sourceCountry: "de", euRefundRate: 0.11, priceRaw: 1000 }),
     ];
-    const res = groupAndAnalyze(items, 0.92);
+    const res = groupAndAnalyze(items, FX);
     for (const p of res[0].prices) {
       expect(p.diffVsUsEur).toBeUndefined();
       expect(p.diffVsUsPercent).toBeUndefined();
@@ -449,9 +462,151 @@ describe("groupAndAnalyze", () => {
         priceRaw: 1000, // net 880
       }),
     ];
-    const res = groupAndAnalyze(items, 0.92);
+    const res = groupAndAnalyze(items, FX);
     const it = findRow(res[0], "it");
     // Baseline is the cheaper US (920), not the spendy one (1104)
     expect(it.diffVsUsEur).toBeCloseTo(-40, 2);
+  });
+});
+
+// ------------------------------------------------------------------
+// Hong Kong + Japan — new in v8
+// ------------------------------------------------------------------
+
+describe("groupAndAnalyze — Japan and Hong Kong", () => {
+  it("converts a JPY item to EUR and applies the 10% tax-free", () => {
+    const items = [
+      mk({
+        id: "jp",
+        region: "JP",
+        currency: "JPY",
+        priceRaw: 200_000,
+        sourceCountry: "jp",
+        // Default 10% tax-free is applied by compute when the row
+        // has no explicit jpTaxFreeRate stored.
+      }),
+    ];
+    const res = groupAndAnalyze(items, FX);
+    const jp = findRow(res[0], "jp");
+    // Sticker is ¥200,000. At jpyToEur 0.0061 → €1,220 raw EUR.
+    expect(jp.rawEur).toBeCloseTo(1220, 1);
+    expect(jp.rawJpy).toBe(200_000);
+    // After 10% tourist tax-free, net is rawEur * 0.90 = €1,098.
+    expect(jp.netEur).toBeCloseTo(1098, 1);
+  });
+
+  it("respects an explicit jpTaxFreeRate override", () => {
+    const items = [
+      mk({
+        id: "jp-no-refund",
+        region: "JP",
+        currency: "JPY",
+        priceRaw: 200_000,
+        jpTaxFreeRate: 0, // user can't claim it (e.g. consumables under threshold)
+      }),
+    ];
+    const res = groupAndAnalyze(items, FX);
+    const jp = findRow(res[0], "jp-no-refund");
+    // No refund → net == raw.
+    expect(jp.netEur).toBeCloseTo(jp.rawEur, 2);
+  });
+
+  it("converts an HKD item to EUR with no tax adjustment", () => {
+    const items = [
+      mk({
+        id: "hk",
+        region: "HK",
+        currency: "HKD",
+        priceRaw: 10_000,
+        sourceCountry: "hk",
+      }),
+    ];
+    const res = groupAndAnalyze(items, FX);
+    const hk = findRow(res[0], "hk");
+    // Sticker is HK$10,000. At hkdToEur 0.117 → €1,170 raw EUR.
+    expect(hk.rawEur).toBeCloseTo(1170, 1);
+    expect(hk.rawHkd).toBe(10_000);
+    // HK has no VAT/sales tax — net is exactly raw.
+    expect(hk.netEur).toBeCloseTo(hk.rawEur, 2);
+  });
+
+  it("groups four regions of the same product and ranks them by net", () => {
+    // Real-ish numbers for Rimowa Trunk Plus (product code 83280631).
+    // Using deliberately crafted prices so the JP row wins after the
+    // 10% tax-free is applied.
+    const items = [
+      mk({
+        id: "us",
+        region: "US",
+        currency: "USD",
+        priceRaw: 1500,
+        salesTaxRate: 0.06, // net 1500 * 0.92 * 1.06 = 1462.8
+        productCode: "83280631",
+      }),
+      mk({
+        id: "eu-it",
+        region: "EU",
+        currency: "EUR",
+        priceRaw: 1450,
+        sourceCountry: "it",
+        euRefundRate: 0.12, // net 1450 * 0.88 = 1276
+        productCode: "83280631",
+      }),
+      mk({
+        id: "jp",
+        region: "JP",
+        currency: "JPY",
+        priceRaw: 220_000, // raw 220000 * 0.0061 = 1342, net * 0.9 = 1207.8
+        sourceCountry: "jp",
+        productCode: "83280631",
+      }),
+      mk({
+        id: "hk",
+        region: "HK",
+        currency: "HKD",
+        priceRaw: 11_500, // raw HK$11500 * 0.117 = 1345.5, no adjustment
+        sourceCountry: "hk",
+        productCode: "83280631",
+      }),
+    ];
+    const res = groupAndAnalyze(items, FX);
+    expect(res).toHaveLength(1);
+    const card = res[0];
+    expect(card.prices).toHaveLength(4);
+
+    // JP wins on net after the 10% tax-free.
+    expect(card.cheapestNetItemId).toBe("jp");
+
+    // Every non-US row gets a diff vs the US baseline (1462.8).
+    const jp = findRow(card, "jp");
+    const it = findRow(card, "eu-it");
+    const hk = findRow(card, "hk");
+    expect(jp.diffVsUsEur).toBeLessThan(0); // JP cheaper than US
+    expect(it.diffVsUsEur).toBeLessThan(0); // IT cheaper than US
+    expect(hk.diffVsUsEur).toBeLessThan(0); // HK cheaper than US
+  });
+
+  it("excludes JP/HK from cheapest-net selection when FX is null", () => {
+    const items = [
+      mk({
+        id: "jp",
+        region: "JP",
+        currency: "JPY",
+        priceRaw: 200_000,
+      }),
+      mk({
+        id: "eu",
+        region: "EU",
+        currency: "EUR",
+        priceRaw: 1000,
+        euRefundRate: 0.12,
+      }),
+    ];
+    const res = groupAndAnalyze(items, null);
+    const card = res[0];
+    const jp = findRow(card, "jp");
+    expect(Number.isFinite(jp.netEur)).toBe(false);
+    // The EU row is the only one with a finite net.
+    expect(card.cheapestNetItemId).toBe("eu");
   });
 });

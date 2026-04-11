@@ -16,10 +16,18 @@ export interface ParsedProductUrl {
   sourceCountry?: string;
   /**
    * Tourist refund rate (approximate) — derived from the country code
-   * (EU only). Undefined for US URLs and for pan-EU URLs without a
-   * country. This is NOT the VAT rate; see EUROZONE_REFUND_RATE below.
+   * (EU only). Undefined for non-EU URLs and for pan-EU URLs without
+   * a country. This is NOT the VAT rate; see EUROZONE_REFUND_RATE
+   * below.
    */
   euRefundRate?: number;
+  /**
+   * Japanese tourist tax-free rate, defaulting to 10% (the full
+   * consumption tax) on every JP URL. Defined only for sourceRegion
+   * === "JP". Like euRefundRate this can be overridden by the user
+   * per-item via the API.
+   */
+  jpTaxFreeRate?: number;
 }
 
 export class ProductUrlParseError extends Error {
@@ -76,22 +84,29 @@ export const EUROZONE_REFUND_RATE: Record<string, number> = {
 };
 
 /**
+ * Default Japanese consumption-tax exemption applied to every JP URL.
+ * Tourists who present a passport at checkout get the full 10% off
+ * (免税 / "menzei"), unlike the EU refund operators which keep some as
+ * a fee. The user can still override per item.
+ */
+export const DEFAULT_JP_TAX_FREE_RATE = 0.10;
+
+/**
  * 2-letter codes for regions we explicitly don't support because their
- * currency isn't EUR or USD. Mapping values are used in error messages.
+ * currency isn't EUR / USD / HKD / JPY. Mapping values are used in
+ * error messages.
  */
 const NON_EUR_USD_REJECT: Record<string, string> = {
-  uk: "UK (GBP) is not supported — only Eurozone and US sites are.",
-  gb: "UK (GBP) is not supported — only Eurozone and US sites are.",
-  ch: "Switzerland (CHF) is not supported — only Eurozone and US sites are.",
-  jp: "Japan (JPY) is not supported — only Eurozone and US sites are.",
-  kr: "Korea (KRW) is not supported — only Eurozone and US sites are.",
-  cn: "China (CNY) is not supported — only Eurozone and US sites are.",
-  sg: "Singapore (SGD) is not supported — only Eurozone and US sites are.",
-  hk: "Hong Kong (HKD) is not supported — only Eurozone and US sites are.",
-  ca: "Canada (CAD) is not supported — only Eurozone and US sites are.",
-  au: "Australia (AUD) is not supported — only Eurozone and US sites are.",
-  ae: "UAE (AED) is not supported — only Eurozone and US sites are.",
-  sa: "Saudi Arabia (SAR) is not supported — only Eurozone and US sites are.",
+  uk: "UK (GBP) is not supported — only Eurozone, US, HK, and JP sites are.",
+  gb: "UK (GBP) is not supported — only Eurozone, US, HK, and JP sites are.",
+  ch: "Switzerland (CHF) is not supported — only Eurozone, US, HK, and JP sites are.",
+  kr: "Korea (KRW) is not supported — only Eurozone, US, HK, and JP sites are.",
+  cn: "China (CNY) is not supported — only Eurozone, US, HK, and JP sites are.",
+  sg: "Singapore (SGD) is not supported — only Eurozone, US, HK, and JP sites are.",
+  ca: "Canada (CAD) is not supported — only Eurozone, US, HK, and JP sites are.",
+  au: "Australia (AUD) is not supported — only Eurozone, US, HK, and JP sites are.",
+  ae: "UAE (AED) is not supported — only Eurozone, US, HK, and JP sites are.",
+  sa: "Saudi Arabia (SAR) is not supported — only Eurozone, US, HK, and JP sites are.",
 };
 
 /**
@@ -100,15 +115,18 @@ const NON_EUR_USD_REJECT: Record<string, string> = {
  * Handles:
  *   - `eu`              → EU (pan-EU, no country)
  *   - `us`, `us-en`, `en-us` → US
+ *   - `jp`, `jp-ja`, `ja-jp`, `en-jp` → JP (with default 10% tax-free)
+ *   - `hk`, `hk-en`, `en-hk`, `zh-hk`, `hk-zh` → HK (no tax adjustment)
  *   - `it`, `de`, `fr`, … → EU with the country's refund rate
  *   - `it-it`, `en-it`, `de-de`, `en-de`, … → EU with the country's rate
- *   - `uk`, `gb`, `en-gb`, `ch`, `jp`, … → reject (returns error string)
+ *   - `uk`, `gb`, `en-gb`, `ch`, `kr`, … → reject (returns error string)
  *   - anything else → null (no match)
  */
 interface RegionMatch {
   region: Region;
   country?: string;
   refundRate?: number;
+  jpTaxFreeRate?: number;
 }
 type SegmentResult = RegionMatch | { reject: string } | null;
 
@@ -118,6 +136,10 @@ function detectRegion(rawSegment: string): SegmentResult {
   // Bare single-token codes
   if (s === "eu") return { region: "EU" };
   if (s === "us" || s === "us-en" || s === "en-us") return { region: "US" };
+  if (s === "jp") {
+    return { region: "JP", country: "jp", jpTaxFreeRate: DEFAULT_JP_TAX_FREE_RATE };
+  }
+  if (s === "hk") return { region: "HK", country: "hk" };
   if (EUROZONE_REFUND_RATE[s] !== undefined) {
     return {
       region: "EU",
@@ -129,7 +151,8 @@ function detectRegion(rawSegment: string): SegmentResult {
     return { reject: NON_EUR_USD_REJECT[s] };
   }
 
-  // Hyphenated locale like "it-it", "en-it", "de-de", "en-gb".
+  // Hyphenated locale like "it-it", "en-it", "de-de", "en-gb",
+  // "jp-ja", "ja-jp", "hk-en", "zh-hk".
   if (/^[a-z]{2}-[a-z]{2}$/.test(s)) {
     const parts = s.split("-");
     // Rejects take priority — "en-gb" should fail with a GBP reason
@@ -142,6 +165,14 @@ function detectRegion(rawSegment: string): SegmentResult {
     for (const part of parts) {
       if (part === "us") return { region: "US" };
       if (part === "eu") return { region: "EU" };
+      if (part === "jp") {
+        return {
+          region: "JP",
+          country: "jp",
+          jpTaxFreeRate: DEFAULT_JP_TAX_FREE_RATE,
+        };
+      }
+      if (part === "hk") return { region: "HK", country: "hk" };
       if (EUROZONE_REFUND_RATE[part] !== undefined) {
         return {
           region: "EU",
@@ -236,6 +267,8 @@ const HOMEPAGE_SEGMENTS = new Set([
  *   https://www.rimowa.com/eu/en/luggage/cabin/.../92552634.html
  *   https://www.rimowa.com/us-en/.../92552634.html
  *   https://www.rimowa.com/it/it/luggage/.../97353004.html
+ *   https://www.rimowa.com/jp/ja/luggage-collection-.../83280631.html
+ *   https://www.rimowa.com/hk/en/luggage/.../83280631.html
  *   https://www.moncler.com/en-us/men/.../…-L10911A001605968E742.html
  *   https://www.moncler.com/it-it/men/.../…-L10911A001605968E742.html
  */
@@ -313,5 +346,6 @@ export function parseProductUrl(input: string): ParsedProductUrl {
     sourceRegion: matched.region,
     sourceCountry: matched.country,
     euRefundRate: matched.refundRate,
+    jpTaxFreeRate: matched.jpTaxFreeRate,
   };
 }

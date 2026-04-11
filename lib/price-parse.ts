@@ -74,16 +74,20 @@ export function parsePrice(input: string): number | null {
 
 /**
  * Format a parsed price for display as a preview next to the input
- * field (e.g. "= €1,190.00"). Uses the given currency, defaulting to
- * EUR. The output is always in the en-IE locale (stable number
- * formatting) regardless of the input's locale.
+ * field (e.g. "= €1,190.00"). Uses the given currency. The output
+ * locale is stable (en-IE) regardless of the input's locale; JPY
+ * uses an integer format because yen has no fractional units, HKD
+ * uses two decimals.
  */
 export function formatPricePreview(
   n: number,
-  currency: "EUR" | "USD",
+  currency: "EUR" | "USD" | "HKD" | "JPY",
 ): string {
   return new Intl.NumberFormat("en-IE", {
     style: "currency",
     currency,
+    // JPY: 0 decimals (¥1,500). EUR/USD/HKD: 2 decimals.
+    maximumFractionDigits: currency === "JPY" ? 0 : 2,
+    minimumFractionDigits: currency === "JPY" ? 0 : 2,
   }).format(n);
 }

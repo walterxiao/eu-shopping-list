@@ -8,22 +8,23 @@ import { EUROZONE_REFUND_RATE } from "./product-url";
  * every schema change and add a corresponding `if (version < N)` block
  * in `runMigrations()` below so existing users upgrade smoothly.
  */
-const APP_SCHEMA_VERSION = 7;
+const APP_SCHEMA_VERSION = 8;
 
 const SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS tracked_items (
-    id              TEXT PRIMARY KEY,
-    url             TEXT NOT NULL,
-    host            TEXT,
-    product_code    TEXT NOT NULL,
-    region          TEXT NOT NULL,
-    source_country  TEXT,
-    eu_refund_rate  REAL,
-    sales_tax_rate  REAL,
-    product_name    TEXT NOT NULL,
-    price_raw       REAL NOT NULL,
-    currency        TEXT NOT NULL,
-    updated_at      INTEGER NOT NULL
+    id                 TEXT PRIMARY KEY,
+    url                TEXT NOT NULL,
+    host               TEXT,
+    product_code       TEXT NOT NULL,
+    region             TEXT NOT NULL,
+    source_country     TEXT,
+    eu_refund_rate     REAL,
+    sales_tax_rate     REAL,
+    jp_tax_free_rate   REAL,
+    product_name       TEXT NOT NULL,
+    price_raw          REAL NOT NULL,
+    currency           TEXT NOT NULL,
+    updated_at         INTEGER NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_tracked_items_product_code
     ON tracked_items(product_code);
@@ -152,6 +153,23 @@ function runMigrations(db: DatabaseType): void {
     // store maps to undefined and the compute layer treats as 0%.
     db.pragma("user_version = 7");
     version = 7;
+  }
+
+  // -------- v8: add jp_tax_free_rate column for JP items --------
+  // Pre-v8 there were no HK or JP rows in any database, so this is a
+  // pure column-add with no value rewrite. The new HK and JP support
+  // also doesn't require any column-name changes — the existing
+  // `region` and `currency` columns are TEXT with no CHECK constraint
+  // and accept the new "HK"/"JP" + "HKD"/"JPY" values directly.
+  if (version < 8) {
+    const cols = getColumns(db, "tracked_items");
+    if (!cols.includes("jp_tax_free_rate")) {
+      db.exec(
+        "ALTER TABLE tracked_items ADD COLUMN jp_tax_free_rate REAL",
+      );
+    }
+    db.pragma("user_version = 8");
+    version = 8;
   }
 
   // (Future migrations append here.)
