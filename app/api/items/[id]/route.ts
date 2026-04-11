@@ -11,14 +11,17 @@ const PatchSchema = z
     productName: z.string().trim().min(1).max(128).optional(),
     priceRaw: z.number().positive().max(1_000_000).optional(),
     salesTaxRate: z.number().min(0).max(1).optional(),
+    euRefundRate: z.number().min(0).max(1).optional(),
   })
   .refine(
     (v) =>
       v.productName !== undefined ||
       v.priceRaw !== undefined ||
-      v.salesTaxRate !== undefined,
+      v.salesTaxRate !== undefined ||
+      v.euRefundRate !== undefined,
     {
-      message: "At least one of productName, priceRaw, salesTaxRate is required",
+      message:
+        "At least one of productName, priceRaw, salesTaxRate, euRefundRate is required",
     },
   );
 

@@ -1,7 +1,10 @@
 "use client";
 
-import { useMemo, useState, type FormEvent } from "react";
-import { DEFAULT_US_SALES_TAX_RATE } from "@/lib/compute";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+import {
+  DEFAULT_EU_REFUND_RATE,
+  DEFAULT_US_SALES_TAX_RATE,
+} from "@/lib/compute";
 import { parseProductUrl, ProductUrlParseError } from "@/lib/product-url";
 import { formatPricePreview, parsePrice } from "@/lib/price-parse";
 import type {
@@ -11,6 +14,24 @@ import type {
 } from "@/lib/types";
 
 const DEFAULT_US_SALES_TAX_TEXT = String(DEFAULT_US_SALES_TAX_RATE * 100);
+const DEFAULT_EU_REFUND_TEXT = String(DEFAULT_EU_REFUND_RATE * 100);
+
+/** Parse a percent string like "7.25" or "12" into a fraction 0..1,
+ *  or null if the input isn't a valid percent. Empty string → 0%. */
+function parsePercentFraction(text: string): number | null {
+  const trimmed = text.trim();
+  if (trimmed === "") return 0;
+  const n = Number(trimmed.replace(",", "."));
+  if (!Number.isFinite(n) || n < 0 || n >= 100) return null;
+  return n / 100;
+}
+
+/** Format a rate (e.g. 0.0725) as a display percent ("7.25"). Uses
+ *  the minimum decimals needed — "6" instead of "6.00" when whole. */
+function formatRatePercent(rate: number): string {
+  const pct = rate * 100;
+  return pct === Math.round(pct) ? pct.toFixed(0) : pct.toFixed(2);
+}
 
 interface Props {
   loading: boolean;
@@ -23,6 +44,7 @@ interface Props {
     productName: string,
     priceRaw: number,
     salesTaxRate?: number,
+    euRefundRate?: number,
   ) => Promise<void>;
   onUpdate: (
     id: string,
@@ -30,6 +52,7 @@ interface Props {
       productName?: string;
       priceRaw?: number;
       salesTaxRate?: number;
+      euRefundRate?: number;
     },
   ) => Promise<void>;
   onRemove: (id: string) => Promise<void>;
@@ -88,6 +111,7 @@ function PriceRow({
 }) {
   const { item, rawEur, netEur, rawUsd } = price;
   const isUs = item.region === "US";
+  const isEu = item.region === "EU";
   const [editing, setEditing] = useState(false);
   const [priceText, setPriceText] = useState(String(item.priceRaw));
   /**
@@ -101,26 +125,39 @@ function PriceRow({
       ? String(item.salesTaxRate * 100)
       : DEFAULT_US_SALES_TAX_TEXT,
   );
+  /**
+   * Tourist refund percent string (e.g. "12.0"); only used for EU
+   * rows. Falls back to the per-country default (or 12% pan-EU) if
+   * the stored item has no explicit rate — so the edit cell matches
+   * what the Adj. column is already rendering.
+   */
+  const [refundText, setRefundText] = useState(
+    item.euRefundRate !== undefined
+      ? formatRatePercent(item.euRefundRate)
+      : DEFAULT_EU_REFUND_TEXT,
+  );
   const [busy, setBusy] = useState(false);
 
   const parsedEdit = useMemo(() => parsePrice(priceText), [priceText]);
-  const parsedSalesTax = useMemo<number | null>(() => {
-    if (!isUs) return null;
-    const trimmed = salesTaxText.trim();
-    if (trimmed === "") return 0;
-    const n = Number(trimmed.replace(",", "."));
-    if (!Number.isFinite(n) || n < 0 || n >= 100) return null;
-    return n / 100;
-  }, [isUs, salesTaxText]);
+  const parsedSalesTax = useMemo<number | null>(
+    () => (isUs ? parsePercentFraction(salesTaxText) : null),
+    [isUs, salesTaxText],
+  );
+  const parsedRefund = useMemo<number | null>(
+    () => (isEu ? parsePercentFraction(refundText) : null),
+    [isEu, refundText],
+  );
 
   async function handleSave() {
     if (parsedEdit === null) return;
     if (isUs && parsedSalesTax === null) return;
+    if (isEu && parsedRefund === null) return;
     setBusy(true);
     try {
       await onUpdate(item.id, {
         priceRaw: parsedEdit,
         ...(isUs ? { salesTaxRate: parsedSalesTax ?? 0 } : {}),
+        ...(isEu ? { euRefundRate: parsedRefund ?? 0 } : {}),
       });
       setEditing(false);
     } finally {
@@ -142,24 +179,28 @@ function PriceRow({
   /**
    * Right-column "Adjustment" cell: shows the signed delta between
    * sticker and net for this row.
-   *   EU rows  → "−12% refund"
-   *   US rows  → "+6% tax" (default) or "+8.25% tax" (explicit) or
+   *   EU rows  → "−12% refund" (fallback to app default if the row
+   *              has no explicit rate, matching what compute.ts
+   *              renders in the Net column)
+   *   US rows  → "+6% tax" (default) / "+8.25% tax" (explicit) /
    *              "+0% tax" (explicit zero, muted gray)
    */
   function renderAdjustmentCell(): React.ReactNode {
     if (isUs) {
-      // Undefined (legacy) AND explicit-matching-default look the same
-      // so the user sees "+6% tax" and not a surprising "+0% tax".
       const rate = item.salesTaxRate ?? DEFAULT_US_SALES_TAX_RATE;
       if (rate === 0) {
         return <span className="text-neutral-400">+0% tax</span>;
       }
-      return `+${(rate * 100).toFixed(2)}% tax`;
+      return `+${formatRatePercent(rate)}% tax`;
     }
-    if (item.euRefundRate !== undefined) {
-      return `−${Math.round(item.euRefundRate * 100)}% refund`;
+    // EU row: fall back to DEFAULT_EU_REFUND_RATE for legacy rows so
+    // the cell doesn't show "—" while compute is silently applying
+    // the default to the Net column.
+    const rate = item.euRefundRate ?? DEFAULT_EU_REFUND_RATE;
+    if (rate === 0) {
+      return <span className="text-neutral-400">−0% refund</span>;
     }
-    return "—";
+    return `−${formatRatePercent(rate)}% refund`;
   }
 
   return (
@@ -216,11 +257,24 @@ function PriceRow({
               inputMode="decimal"
               value={salesTaxText}
               onChange={(e) => setSalesTaxText(e.target.value)}
-              placeholder="0"
+              placeholder={DEFAULT_US_SALES_TAX_TEXT}
               className="w-14 rounded border border-neutral-300 px-2 py-1 text-xs"
               aria-label="Sales tax percent"
             />
-            <span>%</span>
+            <span>% tax</span>
+          </div>
+        ) : editing && isEu ? (
+          <div className="flex items-center gap-1">
+            <input
+              type="text"
+              inputMode="decimal"
+              value={refundText}
+              onChange={(e) => setRefundText(e.target.value)}
+              placeholder={DEFAULT_EU_REFUND_TEXT}
+              className="w-14 rounded border border-neutral-300 px-2 py-1 text-xs"
+              aria-label="Tourist refund percent"
+            />
+            <span>% refund</span>
           </div>
         ) : (
           renderAdjustmentCell()
@@ -273,7 +327,8 @@ function PriceRow({
                 disabled={
                   busy ||
                   parsedEdit === null ||
-                  (isUs && parsedSalesTax === null)
+                  (isUs && parsedSalesTax === null) ||
+                  (isEu && parsedRefund === null)
                 }
                 className="rounded bg-neutral-900 px-2 py-1 text-xs font-medium text-white hover:bg-neutral-800 disabled:opacity-50"
               >
@@ -288,6 +343,11 @@ function PriceRow({
                       ? String(item.salesTaxRate * 100)
                       : DEFAULT_US_SALES_TAX_TEXT,
                   );
+                  setRefundText(
+                    item.euRefundRate !== undefined
+                      ? formatRatePercent(item.euRefundRate)
+                      : DEFAULT_EU_REFUND_TEXT,
+                  );
                 }}
                 className="rounded px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-100"
               >
@@ -301,6 +361,11 @@ function PriceRow({
             )}
             {isUs && parsedSalesTax === null && (
               <span className="text-[11px] text-red-600">tax 0–100%</span>
+            )}
+            {isEu && parsedRefund === null && (
+              <span className="text-[11px] text-red-600">
+                refund 0–100%
+              </span>
             )}
           </div>
         ) : (
@@ -348,6 +413,7 @@ function AddAnotherRegionForm({
   const [salesTaxText, setSalesTaxText] = useState(
     DEFAULT_US_SALES_TAX_TEXT,
   );
+  const [refundText, setRefundText] = useState(DEFAULT_EU_REFUND_TEXT);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -384,17 +450,29 @@ function AddAnotherRegionForm({
     parseResult &&
     "sourceRegion" in parseResult &&
     parseResult.sourceRegion === "US";
+  const isEu =
+    parseResult &&
+    "sourceRegion" in parseResult &&
+    parseResult.sourceRegion === "EU";
   const currency: "EUR" | "USD" = isUs ? "USD" : "EUR";
   const parsedPrice = useMemo(() => parsePrice(priceText), [priceText]);
 
-  const parsedSalesTax = useMemo<number | null>(() => {
-    if (!isUs) return null;
-    const trimmed = salesTaxText.trim();
-    if (trimmed === "") return 0;
-    const n = Number(trimmed.replace(",", "."));
-    if (!Number.isFinite(n) || n < 0 || n >= 100) return null;
-    return n / 100;
-  }, [isUs, salesTaxText]);
+  const parsedSalesTax = useMemo<number | null>(
+    () => (isUs ? parsePercentFraction(salesTaxText) : null),
+    [isUs, salesTaxText],
+  );
+  const parsedRefund = useMemo<number | null>(
+    () => (isEu ? parsePercentFraction(refundText) : null),
+    [isEu, refundText],
+  );
+
+  // Auto-fill the refund % from the URL's country when the user
+  // pastes an EU URL. Pre-fills "12" for IT, "11" for DE, etc.
+  useEffect(() => {
+    if (!isEu || !parseResult || !("euRefundRate" in parseResult)) return;
+    const rate = parseResult.euRefundRate ?? DEFAULT_EU_REFUND_RATE;
+    setRefundText(formatRatePercent(rate));
+  }, [isEu, parseResult]);
 
   const mismatchReason = !parseResult
     ? null
@@ -416,6 +494,7 @@ function AddAnotherRegionForm({
     !alreadyExists &&
     parsedPrice !== null &&
     (!isUs || parsedSalesTax !== null) &&
+    (!isEu || parsedRefund !== null) &&
     !submitting;
 
   async function handleSubmit(e: FormEvent) {
@@ -429,10 +508,12 @@ function AddAnotherRegionForm({
         card.productName,
         parsedPrice,
         isUs ? (parsedSalesTax ?? 0) : undefined,
+        isEu ? (parsedRefund ?? 0) : undefined,
       );
       setUrl("");
       setPriceText("");
       setSalesTaxText(DEFAULT_US_SALES_TAX_TEXT);
+      setRefundText(DEFAULT_EU_REFUND_TEXT);
       setExpanded(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -468,6 +549,7 @@ function AddAnotherRegionForm({
             setUrl("");
             setPriceText("");
             setSalesTaxText(DEFAULT_US_SALES_TAX_TEXT);
+            setRefundText(DEFAULT_EU_REFUND_TEXT);
             setError(null);
           }}
           className="text-xs text-neutral-400 hover:text-neutral-700"
@@ -503,11 +585,25 @@ function AddAnotherRegionForm({
               inputMode="decimal"
               value={salesTaxText}
               onChange={(e) => setSalesTaxText(e.target.value)}
-              placeholder="0"
+              placeholder={DEFAULT_US_SALES_TAX_TEXT}
               className="w-14 rounded border border-neutral-300 px-2 py-1 text-xs focus:border-neutral-500 focus:outline-none"
               aria-label="Sales tax percent"
             />
             <span className="text-[11px] text-neutral-500">% tax</span>
+          </>
+        )}
+        {isEu && (
+          <>
+            <input
+              type="text"
+              inputMode="decimal"
+              value={refundText}
+              onChange={(e) => setRefundText(e.target.value)}
+              placeholder={DEFAULT_EU_REFUND_TEXT}
+              className="w-14 rounded border border-neutral-300 px-2 py-1 text-xs focus:border-neutral-500 focus:outline-none"
+              aria-label="Tourist refund percent"
+            />
+            <span className="text-[11px] text-neutral-500">% refund</span>
           </>
         )}
         <button
@@ -524,6 +620,11 @@ function AddAnotherRegionForm({
       {isUs && parsedSalesTax === null && salesTaxText.trim() !== "" && (
         <p className="text-[11px] text-red-600">
           Sales tax must be 0–100 (e.g. 7.25)
+        </p>
+      )}
+      {isEu && parsedRefund === null && refundText.trim() !== "" && (
+        <p className="text-[11px] text-red-600">
+          Refund rate must be 0–100 (e.g. 12)
         </p>
       )}
       {error && <p className="text-[11px] text-red-600">{error}</p>}

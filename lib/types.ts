@@ -54,8 +54,16 @@ export interface NewItemInput {
   url: string;
   productName: string;
   priceRaw: number;
-  /** Sales tax rate as a fraction (only meaningful for US URLs). */
+  /**
+   * Sales tax rate as a fraction (US only; ignored for EU URLs).
+   * Defaults to DEFAULT_US_SALES_TAX_RATE if omitted.
+   */
   salesTaxRate?: number;
+  /**
+   * Tourist VAT refund rate as a fraction (EU only; ignored for US
+   * URLs). Overrides the country default derived from the URL.
+   */
+  euRefundRate?: number;
 }
 
 /** Request body for PATCH /api/items/:id — every field optional. */
@@ -63,6 +71,7 @@ export interface UpdateItemInput {
   productName?: string;
   priceRaw?: number;
   salesTaxRate?: number;
+  euRefundRate?: number;
 }
 
 /**

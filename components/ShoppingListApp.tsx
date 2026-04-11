@@ -68,6 +68,7 @@ export default function ShoppingListApp() {
       productName: string,
       priceRaw: number,
       salesTaxRate?: number,
+      euRefundRate?: number,
     ) => {
       const res = await fetch("/api/items", {
         method: "POST",
@@ -77,6 +78,7 @@ export default function ShoppingListApp() {
           productName,
           priceRaw,
           ...(salesTaxRate !== undefined ? { salesTaxRate } : {}),
+          ...(euRefundRate !== undefined ? { euRefundRate } : {}),
         }),
       });
       if (!res.ok) {
@@ -98,6 +100,7 @@ export default function ShoppingListApp() {
         productName?: string;
         priceRaw?: number;
         salesTaxRate?: number;
+        euRefundRate?: number;
       },
     ) => {
       const res = await fetch(`/api/items/${id}`, {

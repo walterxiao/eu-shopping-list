@@ -12,6 +12,8 @@ const NewItemSchema = z.object({
   priceRaw: z.number().positive().max(1_000_000),
   /** Fraction (0..1), only meaningful for US URLs; ignored for EU. */
   salesTaxRate: z.number().min(0).max(1).optional(),
+  /** Fraction (0..1), only meaningful for EU URLs; ignored for US. */
+  euRefundRate: z.number().min(0).max(1).optional(),
 });
 
 export async function GET() {

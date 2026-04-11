@@ -78,6 +78,23 @@ export function getItem(id: string): TrackedItem | null {
  * country, or host. {@link ProductUrlParseError} propagates to the
  * caller (which maps it to HTTP 400 in the route handler).
  */
+function validateRate(
+  value: number | undefined,
+  label: string,
+): void {
+  if (value === undefined) return;
+  if (!Number.isFinite(value) || value < 0) {
+    throw new ProductUrlParseError(
+      `${label} must be a non-negative number`,
+    );
+  }
+  if (value > 1) {
+    throw new ProductUrlParseError(
+      `${label} must be a fraction (e.g. 0.0725 for 7.25%), not a percent`,
+    );
+  }
+}
+
 export function createItem(input: NewItemInput): TrackedItem {
   const productName = input.productName.trim();
   if (!productName) {
@@ -86,29 +103,30 @@ export function createItem(input: NewItemInput): TrackedItem {
   if (!Number.isFinite(input.priceRaw) || input.priceRaw <= 0) {
     throw new ProductUrlParseError("Price must be a positive number");
   }
-  if (input.salesTaxRate !== undefined) {
-    if (!Number.isFinite(input.salesTaxRate) || input.salesTaxRate < 0) {
-      throw new ProductUrlParseError(
-        "Sales tax rate must be a non-negative number",
-      );
-    }
-    if (input.salesTaxRate > 1) {
-      throw new ProductUrlParseError(
-        "Sales tax rate must be a fraction (e.g. 0.0725 for 7.25%), not a percent",
-      );
-    }
-  }
+  validateRate(input.salesTaxRate, "Sales tax rate");
+  validateRate(input.euRefundRate, "EU refund rate");
 
   // Throws ProductUrlParseError on bad input.
   const parsed = parseProductUrl(input.url);
 
   const id = randomUUID();
   const currency = parsed.sourceRegion === "US" ? "USD" : "EUR";
+
   // Sales tax only makes sense for US items; ignore the field for EU.
   const salesTaxRate =
     parsed.sourceRegion === "US"
       ? (input.salesTaxRate ?? null)
       : null;
+
+  // Tourist refund only makes sense for EU items; ignore for US.
+  // For EU, user override (input.euRefundRate) wins over the URL's
+  // country default (parsed.euRefundRate), which in turn wins over
+  // null (legacy, compute falls back to DEFAULT_EU_REFUND_RATE).
+  const euRefundRate =
+    parsed.sourceRegion === "EU"
+      ? (input.euRefundRate ?? parsed.euRefundRate ?? null)
+      : null;
+
   const now = Math.floor(Date.now() / 1000);
 
   getDb()
@@ -125,7 +143,7 @@ export function createItem(input: NewItemInput): TrackedItem {
       parsed.productCode,
       parsed.sourceRegion,
       parsed.sourceCountry ?? null,
-      parsed.euRefundRate ?? null,
+      euRefundRate,
       salesTaxRate,
       productName,
       input.priceRaw,
@@ -153,11 +171,18 @@ export function updateItem(
       : existing.productName;
   const nextPrice =
     patch.priceRaw !== undefined ? patch.priceRaw : existing.priceRaw;
-  // salesTaxRate only meaningful for US rows; ignore the field for EU.
+
+  // salesTaxRate only meaningful for US rows; ignore for EU.
   const nextSalesTax =
     existing.region === "US" && patch.salesTaxRate !== undefined
       ? patch.salesTaxRate
       : (existing.salesTaxRate ?? null);
+
+  // euRefundRate only meaningful for EU rows; ignore for US.
+  const nextEuRefund =
+    existing.region === "EU" && patch.euRefundRate !== undefined
+      ? patch.euRefundRate
+      : (existing.euRefundRate ?? null);
 
   if (!nextName) {
     throw new ProductUrlParseError("Product name cannot be empty");
@@ -166,26 +191,21 @@ export function updateItem(
     throw new ProductUrlParseError("Price must be a positive number");
   }
   if (nextSalesTax !== null && nextSalesTax !== undefined) {
-    if (!Number.isFinite(nextSalesTax) || nextSalesTax < 0) {
-      throw new ProductUrlParseError(
-        "Sales tax rate must be a non-negative number",
-      );
-    }
-    if (nextSalesTax > 1) {
-      throw new ProductUrlParseError(
-        "Sales tax rate must be a fraction (e.g. 0.0725 for 7.25%), not a percent",
-      );
-    }
+    validateRate(nextSalesTax, "Sales tax rate");
+  }
+  if (nextEuRefund !== null && nextEuRefund !== undefined) {
+    validateRate(nextEuRefund, "EU refund rate");
   }
 
   const now = Math.floor(Date.now() / 1000);
   getDb()
     .prepare(
       `UPDATE tracked_items
-       SET product_name = ?, price_raw = ?, sales_tax_rate = ?, updated_at = ?
+       SET product_name = ?, price_raw = ?, sales_tax_rate = ?,
+           eu_refund_rate = ?, updated_at = ?
        WHERE id = ?`,
     )
-    .run(nextName, nextPrice, nextSalesTax, now, id);
+    .run(nextName, nextPrice, nextSalesTax, nextEuRefund, now, id);
 
   return getItem(id);
 }

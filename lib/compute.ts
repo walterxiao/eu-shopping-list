@@ -10,7 +10,7 @@ import type {
  * Italian / French / Spanish net refund for a ~€1000 Global Blue
  * purchase.
  */
-const DEFAULT_EU_REFUND_RATE = 0.12;
+export const DEFAULT_EU_REFUND_RATE = 0.12;
 
 /**
  * Default US sales tax rate applied when a US item has no explicit

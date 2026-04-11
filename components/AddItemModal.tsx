@@ -7,12 +7,16 @@ import {
   useState,
   type FormEvent,
 } from "react";
-import { DEFAULT_US_SALES_TAX_RATE } from "@/lib/compute";
+import {
+  DEFAULT_EU_REFUND_RATE,
+  DEFAULT_US_SALES_TAX_RATE,
+} from "@/lib/compute";
 import { parseProductUrl, ProductUrlParseError } from "@/lib/product-url";
 import { formatPricePreview, parsePrice } from "@/lib/price-parse";
 import type { TrackedItem } from "@/lib/types";
 
 const DEFAULT_US_SALES_TAX_TEXT = String(DEFAULT_US_SALES_TAX_RATE * 100);
+const DEFAULT_EU_REFUND_TEXT = String(DEFAULT_EU_REFUND_RATE * 100);
 
 interface Props {
   open: boolean;
@@ -23,6 +27,7 @@ interface Props {
     productName: string,
     priceRaw: number,
     salesTaxRate?: number,
+    euRefundRate?: number,
   ) => Promise<void>;
 }
 
@@ -73,6 +78,12 @@ export default function AddItemModal({ open, onClose, items, onAdd }: Props) {
   const [salesTaxText, setSalesTaxText] = useState(
     DEFAULT_US_SALES_TAX_TEXT,
   );
+  /**
+   * Percent string for the EU tourist refund rate. Auto-populated
+   * when the pasted URL resolves to a country — e.g. "12" for Italy,
+   * "11" for Germany — but the user can override.
+   */
+  const [refundText, setRefundText] = useState(DEFAULT_EU_REFUND_TEXT);
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
 
@@ -85,6 +96,7 @@ export default function AddItemModal({ open, onClose, items, onAdd }: Props) {
       setProductName("");
       setPriceText("");
       setSalesTaxText(DEFAULT_US_SALES_TAX_TEXT);
+      setRefundText(DEFAULT_EU_REFUND_TEXT);
       setServerError(null);
       setSubmitting(false);
     }
@@ -102,6 +114,7 @@ export default function AddItemModal({ open, onClose, items, onAdd }: Props) {
 
   const parseResult = useMemo(() => parseForBadge(url), [url]);
   const isUs = parseResult.kind === "ok" && parseResult.region === "US";
+  const isEu = parseResult.kind === "ok" && parseResult.region === "EU";
   const currency: "EUR" | "USD" = isUs ? "USD" : "EUR";
   const parsedPrice = useMemo(() => parsePrice(priceText), [priceText]);
 
@@ -110,13 +123,34 @@ export default function AddItemModal({ open, onClose, items, onAdd }: Props) {
    * Empty / whitespace → 0%. Returns null on garbage so we can show
    * an inline error.
    */
-  const parsedSalesTaxFraction = useMemo<number | null>(() => {
-    const trimmed = salesTaxText.trim();
+  function parsePercentFraction(text: string): number | null {
+    const trimmed = text.trim();
     if (trimmed === "") return 0;
     const n = Number(trimmed.replace(",", "."));
     if (!Number.isFinite(n) || n < 0 || n >= 100) return null;
     return n / 100;
-  }, [salesTaxText]);
+  }
+  const parsedSalesTaxFraction = useMemo<number | null>(
+    () => parsePercentFraction(salesTaxText),
+    [salesTaxText],
+  );
+  const parsedRefundFraction = useMemo<number | null>(
+    () => parsePercentFraction(refundText),
+    [refundText],
+  );
+
+  /**
+   * Auto-populate the refund % field from the URL's country code
+   * whenever the URL parses as EU. E.g. Italian URLs pre-fill "12",
+   * German URLs pre-fill "11". The user can still override the
+   * number manually after the auto-fill.
+   */
+  useEffect(() => {
+    if (parseResult.kind !== "ok") return;
+    if (parseResult.region !== "EU") return;
+    const rate = parseResult.refundRate ?? DEFAULT_EU_REFUND_RATE;
+    setRefundText(String(Math.round(rate * 100 * 100) / 100));
+  }, [parseResult]);
 
   // Auto-suggest the product name when the pasted URL's (host, code)
   // already exists in the store (typically the user is adding the
@@ -142,7 +176,8 @@ export default function AddItemModal({ open, onClose, items, onAdd }: Props) {
     parseResult.kind === "ok" &&
     productName.trim().length > 0 &&
     parsedPrice !== null &&
-    parsedSalesTaxFraction !== null &&
+    (!isUs || parsedSalesTaxFraction !== null) &&
+    (!isEu || parsedRefundFraction !== null) &&
     !submitting;
 
   async function handleSubmit(e: FormEvent) {
@@ -155,9 +190,11 @@ export default function AddItemModal({ open, onClose, items, onAdd }: Props) {
         url.trim(),
         productName.trim(),
         parsedPrice,
-        // Only send the sales tax for US URLs; the server ignores it
-        // for EU but no point round-tripping zero noise.
+        // Only send the sales tax for US URLs and the refund rate for
+        // EU URLs. The server ignores them in the wrong region but no
+        // point round-tripping extra noise.
         isUs ? (parsedSalesTaxFraction ?? 0) : undefined,
+        isEu ? (parsedRefundFraction ?? 0) : undefined,
       );
       onClose();
     } catch (err) {
@@ -326,6 +363,44 @@ export default function AddItemModal({ open, onClose, items, onAdd }: Props) {
                   <span className="text-xs text-neutral-500">
                     Default {DEFAULT_US_SALES_TAX_TEXT}% (Northern VA /
                     ZIP 22180). Clear or set to 0 to disable.
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+
+          {isEu && (
+            <div>
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                Tourist refund %
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={refundText}
+                  onChange={(e) => setRefundText(e.target.value)}
+                  placeholder={DEFAULT_EU_REFUND_TEXT}
+                  className="w-24 rounded border border-neutral-300 px-3 py-2 text-sm focus:border-neutral-500 focus:outline-none"
+                  aria-label="Tourist refund percent"
+                />
+                <span className="text-sm text-neutral-500">%</span>
+                {parsedRefundFraction === null ? (
+                  <span className="text-xs text-red-600">
+                    Enter a number 0–100 (try 12)
+                  </span>
+                ) : parsedPrice !== null && parsedRefundFraction > 0 ? (
+                  <span className="text-xs text-neutral-500">
+                    after-refund ≈{" "}
+                    {formatPricePreview(
+                      parsedPrice * (1 - parsedRefundFraction),
+                      "EUR",
+                    )}
+                  </span>
+                ) : (
+                  <span className="text-xs text-neutral-500">
+                    Auto-filled from the URL&apos;s country. Override if
+                    your refund operator differs.
                   </span>
                 )}
               </div>

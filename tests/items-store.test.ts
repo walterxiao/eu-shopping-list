@@ -151,6 +151,88 @@ describe("items-store", () => {
     ).toThrow(/non-negative/i);
   });
 
+  it("uses an explicit euRefundRate override on an EU item", () => {
+    // User wants to override the parser's country default (0.12 for
+    // IT) with a different refund rate — e.g. their refund operator
+    // gives them 10% instead of 12%. The explicit override should win.
+    const item = createItem({
+      url: IT_URL,
+      productName: "Classic Cabin — Silver",
+      priceRaw: 1275,
+      euRefundRate: 0.1,
+    });
+    expect(item.region).toBe("EU");
+    expect(item.euRefundRate).toBe(0.1);
+  });
+
+  it("falls back to the parsed country default when no override is given", () => {
+    const item = createItem({
+      url: IT_URL,
+      productName: "Classic Cabin — Silver",
+      priceRaw: 1275,
+    });
+    // No explicit override → should use the IT default of 0.12.
+    expect(item.euRefundRate).toBe(0.12);
+  });
+
+  it("ignores euRefundRate on US items even if provided", () => {
+    const item = createItem({
+      url: US_URL,
+      productName: "Original Cabin — Black",
+      priceRaw: 1300,
+      // US rows don't have a refund rate — store drops it.
+      euRefundRate: 0.1,
+    });
+    expect(item.region).toBe("US");
+    expect(item.euRefundRate).toBeUndefined();
+  });
+
+  it("rejects a euRefundRate larger than 1 (must be a fraction)", () => {
+    expect(() =>
+      createItem({
+        url: IT_URL,
+        productName: "X",
+        priceRaw: 1,
+        euRefundRate: 12, // user mistakenly passed 12 instead of 0.12
+      }),
+    ).toThrow(/fraction/i);
+  });
+
+  it("rejects a negative euRefundRate", () => {
+    expect(() =>
+      createItem({
+        url: IT_URL,
+        productName: "X",
+        priceRaw: 1,
+        euRefundRate: -0.01,
+      }),
+    ).toThrow(/non-negative/i);
+  });
+
+  it("updateItem can change an EU item's euRefundRate without touching price", () => {
+    const created = createItem({
+      url: IT_URL,
+      productName: "X",
+      priceRaw: 1275,
+    });
+    expect(created.euRefundRate).toBe(0.12);
+    const updated = updateItem(created.id, { euRefundRate: 0.15 });
+    expect(updated).not.toBeNull();
+    expect(updated!.euRefundRate).toBe(0.15);
+    expect(updated!.priceRaw).toBe(1275);
+  });
+
+  it("updateItem ignores euRefundRate on US rows", () => {
+    const created = createItem({
+      url: US_URL,
+      productName: "X",
+      priceRaw: 1300,
+    });
+    const updated = updateItem(created.id, { euRefundRate: 0.15 });
+    expect(updated).not.toBeNull();
+    expect(updated!.euRefundRate).toBeUndefined();
+  });
+
   it("updateItem can change a US item's salesTaxRate without touching price", () => {
     const created = createItem({
       url: US_URL,
