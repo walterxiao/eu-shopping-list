@@ -7,7 +7,7 @@
  *   pm2 save                             # persist process list across reboots
  *
  * The script expects `npm run build` to have been run first — pm2
- * itself just exec's `npm run start` (which is `next start -p 9753`).
+ * itself just exec's `npm run start` (which is `next start -p 8642`).
  *
  * Why a CommonJS file: pm2 always loads ecosystem files via Node's
  * legacy `require`, even when the surrounding project is ESM. Naming
@@ -28,7 +28,7 @@ module.exports = {
       env: {
         NODE_ENV: "production",
         HOSTNAME: "0.0.0.0",
-        PORT: "9753",
+        PORT: "8642",
         NEXT_TELEMETRY_DISABLED: "1",
         // Persist tracked items + FX cache to ./data/app.sqlite
         // (relative to cwd, which is the project root).

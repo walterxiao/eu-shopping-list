@@ -36,14 +36,14 @@ nvm use                    # Node 22
 npm install
 cp .env.example .env
 npm run dev
-# open http://localhost:9753
+# open http://localhost:8642
 ```
 
 ## Quick start (Docker)
 
 ```bash
 docker compose up --build
-# open http://localhost:9753
+# open http://localhost:8642
 ```
 
 The `./data` directory on your host is mounted into the container, so
@@ -251,7 +251,7 @@ The schema is created automatically on startup by `lib/db.ts`.
 Pushes to `main` automatically deploy to your EC2 instance via the
 workflow in `.github/workflows/deploy.yml`. The workflow SSHes to the
 box, pulls the new commit, runs `scripts/deploy-on-ec2.sh`, and waits
-for a healthcheck against `http://localhost:9753/api/items` before
+for a healthcheck against `http://localhost:8642/api/items` before
 reporting success.
 
 ### One-time setup on the EC2 box
@@ -308,7 +308,7 @@ box, paste the private half into the `EC2_SSH_KEY` secret.
 
 Whatever your security group allows for SSH (port 22) is enough for
 the workflow itself. For the app to actually be reachable from your
-laptop, also open inbound TCP **9753** in the security group from
+laptop, also open inbound TCP **8642** in the security group from
 your IP (or `0.0.0.0/0` for public access).
 
 ### How the workflow runs
@@ -321,7 +321,7 @@ your IP (or `0.0.0.0/0` for public access).
 4. The deploy script runs `npm ci`, `npm run build`, then either
    `pm2 reload ecosystem.config.cjs` (subsequent deploys) or
    `pm2 start ecosystem.config.cjs` (very first deploy)
-5. Healthcheck: `curl http://localhost:9753/api/items` until it
+5. Healthcheck: `curl http://localhost:8642/api/items` until it
    returns 200, with a 30s timeout. If it doesn't, the workflow
    fails and the last 30 lines of `pm2 logs` are printed in the
    step output.

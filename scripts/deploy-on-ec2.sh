@@ -14,7 +14,7 @@
 #   3. pm2 reload ecosystem.config.cjs — zero-downtime restart
 #      (or `pm2 start` on the very first run)
 #   4. pm2 save    — persist the process list across reboots
-#   5. Healthcheck — curl http://localhost:9753/api/items and bail
+#   5. Healthcheck — curl http://localhost:8642/api/items and bail
 #      with non-zero exit if it doesn't return 200 in 30s.
 #
 # Exit codes:
@@ -29,7 +29,7 @@
 
 set -euo pipefail
 
-PORT="${PORT:-9753}"
+PORT="${PORT:-8642}"
 PM2_NAME="${PM2_NAME:-eu-shopping-list}"
 HEALTHCHECK_URL="http://localhost:${PORT}/api/items"
 HEALTHCHECK_TIMEOUT_S=30
