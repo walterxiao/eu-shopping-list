@@ -250,14 +250,15 @@ The schema is created automatically on startup by `lib/db.ts`.
 
 Pushes to `main` automatically deploy to your EC2 instance via the
 workflow in `.github/workflows/deploy.yml`. The workflow SSHes to the
-box, pulls the new commit, runs `scripts/deploy-on-ec2.sh`, and waits
-for a healthcheck against `http://localhost:8642/api/items` before
-reporting success.
+box, `git pull`s the new commit, reinstalls deps, rebuilds, and
+restarts pm2 — all inlined in the workflow YAML (no separate
+deploy script).
 
 ### One-time setup on the EC2 box
 
 The workflow assumes the box has Node 22, pm2, and git, and that the
-repository is already cloned to a known directory. Bootstrap once:
+repository is already cloned to `/home/ec2-user/eu-shopping-list`.
+Bootstrap once:
 
 ```bash
 # SSH in
@@ -272,9 +273,9 @@ sudo npm install -g pm2
 pm2 startup systemd -u ec2-user --hp /home/ec2-user
 # (run the sudo command pm2 prints)
 
-# Clone the repo
-git clone https://github.com/<owner>/eu-shopping-list.git ~/eu-shopping-list
-cd ~/eu-shopping-list
+# Clone the repo into the exact path the workflow expects
+git clone https://github.com/<owner>/eu-shopping-list.git /home/ec2-user/eu-shopping-list
+cd /home/ec2-user/eu-shopping-list
 npm ci
 npm run build
 
@@ -284,25 +285,24 @@ pm2 save
 ```
 
 After this, every push to `main` triggers the workflow which calls
-`pm2 reload ecosystem.config.cjs` for a zero-downtime restart.
+`pm2 restart eu-shopping-list || pm2 start ecosystem.config.cjs`
+(restart if running, otherwise first-start).
 
 ### Required GitHub repo secrets
 
 Add these under **Settings → Secrets and variables → Actions** in
 the repo:
 
-| Secret | Required | Example | What it is |
-|---|---|---|---|
-| `EC2_HOST` | yes | `3.142.99.240` | Public IP or DNS name of the box |
-| `EC2_USER` | yes | `ec2-user` | SSH login (or `ubuntu` on Ubuntu AMIs) |
-| `EC2_SSH_KEY` | yes | `-----BEGIN OPENSSH...` | Full PEM contents of an SSH private key authorized on the box |
-| `EC2_PROJECT_DIR` | optional | `/home/ec2-user/eu-shopping-list` | Where the repo lives. Defaults to `~/eu-shopping-list` |
-| `EC2_SSH_PORT` | optional | `22` | Non-default SSH port. Defaults to `22` |
+| Secret | Example | What it is |
+|---|---|---|
+| `EC2_HOST` | `3.142.99.240` | Public IP or DNS name of the box |
+| `EC2_USER` | `ec2-user` | SSH login (or `ubuntu` on Ubuntu AMIs) |
+| `EC2_KEY` | `-----BEGIN OPENSSH...` | Full PEM contents of an SSH private key authorized on the box |
 
 The SSH key only needs to be authorized for the `EC2_USER` account
 (usually `ec2-user`), not root. Generate one with `ssh-keygen -t
 ed25519`, paste the public half into `~/.ssh/authorized_keys` on the
-box, paste the private half into the `EC2_SSH_KEY` secret.
+box, paste the private half into the `EC2_KEY` secret.
 
 ### Security group
 
@@ -311,40 +311,15 @@ the workflow itself. For the app to actually be reachable from your
 laptop, also open inbound TCP **8642** in the security group from
 your IP (or `0.0.0.0/0` for public access).
 
-### How the workflow runs
-
-1. Push to `main` → workflow starts on `ubuntu-latest`
-2. Workflow SSHes to `${EC2_HOST}` as `${EC2_USER}` using
-   `${EC2_SSH_KEY}`
-3. On the box: `cd ${EC2_PROJECT_DIR}`, `git fetch origin main`,
-   `git reset --hard <pushed-sha>`, `bash scripts/deploy-on-ec2.sh`
-4. The deploy script runs `npm ci`, `npm run build`, then either
-   `pm2 reload ecosystem.config.cjs` (subsequent deploys) or
-   `pm2 start ecosystem.config.cjs` (very first deploy)
-5. Healthcheck: `curl http://localhost:8642/api/items` until it
-   returns 200, with a 30s timeout. If it doesn't, the workflow
-   fails and the last 30 lines of `pm2 logs` are printed in the
-   step output.
-
-### Manual redeploy
-
-The workflow has `workflow_dispatch:`, so you can trigger it from the
-**Actions** tab without a code push (e.g. after editing
-`ecosystem.config.cjs` directly on the box and wanting to rebuild).
-
-A `concurrency:` group prevents two deploys from overlapping — a
-second push that lands during a deploy waits for the first to finish
-rather than racing it.
-
 ### Manual debugging on the box
-
-The deploy script also runs standalone for debugging:
 
 ```bash
 ssh ec2-user@<your-ec2-ip>
-cd ~/eu-shopping-list
+cd /home/ec2-user/eu-shopping-list
 git pull
-bash scripts/deploy-on-ec2.sh
+npm ci && npm run build
+pm2 restart eu-shopping-list
+pm2 logs eu-shopping-list --lines 50
 ```
 
 Useful pm2 commands:
@@ -352,7 +327,7 @@ Useful pm2 commands:
 ```bash
 pm2 list                              # see process status
 pm2 logs eu-shopping-list --lines 50  # tail the last 50 lines
-pm2 reload eu-shopping-list           # zero-downtime restart
+pm2 restart eu-shopping-list          # restart
 pm2 describe eu-shopping-list         # cwd, args, env, restarts
 ```
 
