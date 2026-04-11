@@ -27,7 +27,7 @@ ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     CACHE_DB_PATH=/app/data/app.sqlite \
     HOSTNAME=0.0.0.0 \
-    PORT=3000
+    PORT=9753
 
 # Create the data dir and hand everything to the non-root node user
 # that ships with the base image.
@@ -40,5 +40,5 @@ COPY --from=build --chown=node:node /app/.next/standalone ./
 COPY --from=build --chown=node:node /app/.next/static ./.next/static
 COPY --from=build --chown=node:node /app/public ./public
 
-EXPOSE 3000
+EXPOSE 9753
 CMD ["node", "server.js"]

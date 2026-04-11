@@ -4,7 +4,7 @@ services:
     image: rimowa-price-compare:local
     container_name: rimowa-price-compare
     ports:
-      - "3000:3000"
+      - "9753:9753"
     environment:
       # FX rate cache TTL (default 24h).
       CACHE_TTL_SECONDS: "86400"

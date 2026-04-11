@@ -36,14 +36,14 @@ nvm use                    # Node 22
 npm install
 cp .env.example .env
 npm run dev
-# open http://localhost:3000
+# open http://localhost:9753
 ```
 
 ## Quick start (Docker)
 
 ```bash
 docker compose up --build
-# open http://localhost:3000
+# open http://localhost:9753
 ```
 
 The `./data` directory on your host is mounted into the container, so
