@@ -843,8 +843,8 @@ function Card({
               <>
                 {" · "}
                 <span className="text-neutral-600">
-                  showing cheapest ({regionLabel(cheapestNet)}) of{" "}
-                  {card.prices.length} regions
+                  cheapest of {card.prices.length} regions (
+                  {card.prices.map((p) => regionLabel(p)).join(", ")})
                 </span>
               </>
             )}
