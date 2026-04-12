@@ -152,7 +152,7 @@ export default function ShoppingListApp() {
       <header className="border-b border-neutral-200 bg-white px-4 py-4">
         <div className="mx-auto flex max-w-4xl items-start justify-between gap-3">
           <div>
-            <h1 className="text-xl font-bold">EU vs US price check</h1>
+            <h1 className="text-xl font-bold">Region Price Check</h1>
             <p className="text-sm text-neutral-600">
               Track product prices across regions and compare them
               side-by-side with live FX and tourist refund estimates.
