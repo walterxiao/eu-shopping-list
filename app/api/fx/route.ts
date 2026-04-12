@@ -11,6 +11,7 @@ export async function GET() {
     rate: rates.usdToEur,
     hkdRate: rates.hkdToEur,
     jpyRate: rates.jpyToEur,
+    sarRate: rates.sarToEur,
     source: rates.source,
     fetchedAt: new Date().toISOString(),
   };

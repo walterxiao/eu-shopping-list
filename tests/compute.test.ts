@@ -36,7 +36,7 @@ function findRow(card: ComparisonItem, id: string) {
  * Numbers reflect rough late-2025 rates: 1 HKD ≈ 0.117 EUR,
  * 1 JPY ≈ 0.0061 EUR (i.e. ¥150 ≈ €0.92, HK$10 ≈ €1.17).
  */
-const FX = { usdToEur: 0.92, hkdToEur: 0.117, jpyToEur: 0.0061 };
+const FX = { usdToEur: 0.92, hkdToEur: 0.117, jpyToEur: 0.0061, sarToEur: 0.245 };
 
 describe("groupAndAnalyze", () => {
   it("returns an empty list for empty input", () => {
@@ -693,5 +693,30 @@ describe("groupAndAnalyze — Japan and Hong Kong", () => {
     expect(Number.isFinite(jp.netEur)).toBe(false);
     // The EU row is the only one with a finite net.
     expect(card.cheapestNetItemId).toBe("eu");
+  });
+});
+
+// ------------------------------------------------------------------
+// Saudi Arabia — new in SA addition
+// ------------------------------------------------------------------
+
+describe("groupAndAnalyze — Saudi Arabia", () => {
+  it("converts a SAR item to EUR with no adjustment (like HK)", () => {
+    const items = [
+      mk({
+        id: "sa",
+        region: "SA",
+        currency: "SAR",
+        priceRaw: 5_000,
+        sourceCountry: "sa",
+      }),
+    ];
+    const res = groupAndAnalyze(items, FX);
+    const sa = findRow(res[0], "sa");
+    // Sticker is SAR 5,000. At sarToEur 0.245 → €1,225 raw EUR.
+    expect(sa.rawEur).toBeCloseTo(1225, 1);
+    expect(sa.rawSar).toBe(5_000);
+    // SA has no refund/tax adjustment — net is exactly raw.
+    expect(sa.netEur).toBeCloseTo(sa.rawEur, 2);
   });
 });

@@ -45,6 +45,7 @@ export interface FxRatesSnapshot {
   usdToEur: number;
   hkdToEur: number;
   jpyToEur: number;
+  sarToEur: number;
 }
 
 function round2(n: number): number {
@@ -102,6 +103,13 @@ function priceForItem(
     // HK has no VAT and no sales tax — sticker IS the net price.
     const netEur = rawEur;
     return { item, rawEur, netEur, rawHkd };
+  }
+  if (item.currency === "SAR") {
+    const rawSar = item.priceRaw;
+    const rawEur = fx ? round2(rawSar * fx.sarToEur) : NaN;
+    // SA VAT included, no tourist refund modeled — sticker IS the net.
+    const netEur = rawEur;
+    return { item, rawEur, netEur, rawSar };
   }
   // EU / EUR
   const rawEur = round2(item.priceRaw);

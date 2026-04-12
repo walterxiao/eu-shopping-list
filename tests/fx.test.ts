@@ -11,7 +11,7 @@ import { resetDbForTest } from "@/lib/db";
 function makeOkResponse(eurRate: number): Response {
   return new Response(
     JSON.stringify({
-      rates: { EUR: eurRate, HKD: 7.83, JPY: 150 },
+      rates: { EUR: eurRate, HKD: 7.83, JPY: 150, SAR: 3.75 },
     }),
     {
       status: 200,

@@ -223,6 +223,50 @@ describe("parseProductUrl — Rimowa Japan and Hong Kong", () => {
 });
 
 // ------------------------------------------------------------------
+// Saudi Arabia — new in SA addition
+// ------------------------------------------------------------------
+
+describe("parseProductUrl — Saudi Arabia", () => {
+  const VCA_SA =
+    "https://www.vancleefarpels.com/sa/en/collections/jewelry/alhambra/vcarpgv300---vintage-alhambra-reversible-ring.html";
+
+  it("parses the user's VCA Saudi Arabia URL", () => {
+    const p = parseProductUrl(VCA_SA);
+    expect(p.host).toBe("www.vancleefarpels.com");
+    expect(p.productCode).toBe("vcarpgv300");
+    expect(p.sourceRegion).toBe("SA");
+    expect(p.sourceCountry).toBe("sa");
+    // SA has no refund and no tax-free.
+    expect(p.euRefundRate).toBeUndefined();
+    expect(p.jpTaxFreeRate).toBeUndefined();
+  });
+
+  it("parses bare /sa/ as Saudi Arabia", () => {
+    const p = parseProductUrl(
+      "https://example.com/sa/men/cabin/12345678.html",
+    );
+    expect(p.sourceRegion).toBe("SA");
+    expect(p.sourceCountry).toBe("sa");
+  });
+
+  it("parses /en-sa/ hyphenated locale as Saudi Arabia", () => {
+    const p = parseProductUrl(
+      "https://example.com/en-sa/men/cabin/12345678.html",
+    );
+    expect(p.sourceRegion).toBe("SA");
+    expect(p.sourceCountry).toBe("sa");
+  });
+
+  it("parses /ar-sa/ hyphenated locale as Saudi Arabia", () => {
+    const p = parseProductUrl(
+      "https://example.com/ar-sa/men/cabin/12345678.html",
+    );
+    expect(p.sourceRegion).toBe("SA");
+    expect(p.sourceCountry).toBe("sa");
+  });
+});
+
+// ------------------------------------------------------------------
 // Moncler (alphanumeric SKU, hyphenated locale) — new in v5
 // ------------------------------------------------------------------
 

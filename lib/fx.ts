@@ -2,7 +2,7 @@ import { getDb } from "./db";
 
 const FX_TTL_SECONDS = 24 * 3600;
 const FX_ENDPOINT =
-  "https://api.exchangerate.host/latest?base=USD&symbols=EUR,HKD,JPY";
+  "https://api.exchangerate.host/latest?base=USD&symbols=EUR,HKD,JPY,SAR";
 /**
  * Static fallback rates used when we have no cached rate AND the live
  * endpoint is unreachable. Intentionally rough averages from late
@@ -12,10 +12,11 @@ const FALLBACK_RATES_FROM_USD: Record<string, number> = {
   EUR: 0.92,
   HKD: 7.83,
   JPY: 150,
+  SAR: 3.75,
 };
 
 /** Currencies the app converts to EUR (the comparison baseline). */
-export type SupportedCurrency = "USD" | "HKD" | "JPY";
+export type SupportedCurrency = "USD" | "HKD" | "JPY" | "SAR";
 
 interface FxRow {
   rate: number;
@@ -36,6 +37,7 @@ interface LiveRates {
   USD_EUR: number;
   HKD_EUR: number;
   JPY_EUR: number;
+  SAR_EUR: number;
 }
 
 /**
@@ -58,15 +60,17 @@ async function fetchLiveRates(): Promise<LiveRates> {
     throw new Error(`exchangerate.host responded HTTP ${res.status}`);
   }
   const data = (await res.json()) as {
-    rates?: { EUR?: number; HKD?: number; JPY?: number };
+    rates?: { EUR?: number; HKD?: number; JPY?: number; SAR?: number };
   };
   const eur = data.rates?.EUR;
   const hkd = data.rates?.HKD;
   const jpy = data.rates?.JPY;
+  const sar = data.rates?.SAR;
   if (
     typeof eur !== "number" || !isFinite(eur) || eur <= 0 ||
     typeof hkd !== "number" || !isFinite(hkd) || hkd <= 0 ||
-    typeof jpy !== "number" || !isFinite(jpy) || jpy <= 0
+    typeof jpy !== "number" || !isFinite(jpy) || jpy <= 0 ||
+    typeof sar !== "number" || !isFinite(sar) || sar <= 0
   ) {
     throw new Error("exchangerate.host returned invalid rate data");
   }
@@ -74,6 +78,7 @@ async function fetchLiveRates(): Promise<LiveRates> {
     USD_EUR: eur,
     HKD_EUR: eur / hkd,
     JPY_EUR: eur / jpy,
+    SAR_EUR: eur / sar,
   };
 }
 
@@ -84,6 +89,8 @@ export interface FxRates {
   hkdToEur: number;
   /** JPY → EUR (e.g. 0.0061). */
   jpyToEur: number;
+  /** SAR → EUR (e.g. 0.245). */
+  sarToEur: number;
   source: "cache" | "live" | "stale" | "fallback";
 }
 
@@ -114,18 +121,21 @@ export async function getEurFxRates(): Promise<FxRates> {
   const usdRow = readRow("USD-EUR");
   const hkdRow = readRow("HKD-EUR");
   const jpyRow = readRow("JPY-EUR");
+  const sarRow = readRow("SAR-EUR");
 
   const allFresh =
-    usdRow && hkdRow && jpyRow &&
+    usdRow && hkdRow && jpyRow && sarRow &&
     now - usdRow.fetched_at < FX_TTL_SECONDS &&
     now - hkdRow.fetched_at < FX_TTL_SECONDS &&
-    now - jpyRow.fetched_at < FX_TTL_SECONDS;
+    now - jpyRow.fetched_at < FX_TTL_SECONDS &&
+    now - sarRow.fetched_at < FX_TTL_SECONDS;
 
   if (allFresh) {
     return {
       usdToEur: usdRow.rate,
       hkdToEur: hkdRow.rate,
       jpyToEur: jpyRow.rate,
+      sarToEur: sarRow.rate,
       source: "cache",
     };
   }
@@ -143,20 +153,23 @@ export async function getEurFxRates(): Promise<FxRates> {
       upsert.run("USD-EUR", live.USD_EUR, now);
       upsert.run("HKD-EUR", live.HKD_EUR, now);
       upsert.run("JPY-EUR", live.JPY_EUR, now);
+      upsert.run("SAR-EUR", live.SAR_EUR, now);
     })();
     return {
       usdToEur: live.USD_EUR,
       hkdToEur: live.HKD_EUR,
       jpyToEur: live.JPY_EUR,
+      sarToEur: live.SAR_EUR,
       source: "live",
     };
   } catch {
     // Live failed — fall back to whatever we have, even if stale.
-    if (usdRow && hkdRow && jpyRow) {
+    if (usdRow && hkdRow && jpyRow && sarRow) {
       return {
         usdToEur: usdRow.rate,
         hkdToEur: hkdRow.rate,
         jpyToEur: jpyRow.rate,
+        sarToEur: sarRow.rate,
         source: "stale",
       };
     }
@@ -168,6 +181,9 @@ export async function getEurFxRates(): Promise<FxRates> {
       jpyToEur:
         jpyRow?.rate ??
         FALLBACK_RATES_FROM_USD.EUR / FALLBACK_RATES_FROM_USD.JPY,
+      sarToEur:
+        sarRow?.rate ??
+        FALLBACK_RATES_FROM_USD.EUR / FALLBACK_RATES_FROM_USD.SAR,
       source: "fallback",
     };
   }

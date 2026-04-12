@@ -8,8 +8,8 @@
  * stored region as a pure client-side step.
  */
 
-export type Region = "EU" | "US" | "HK" | "JP";
-export type Currency = "EUR" | "USD" | "HKD" | "JPY";
+export type Region = "EU" | "US" | "HK" | "JP" | "SA";
+export type Currency = "EUR" | "USD" | "HKD" | "JPY" | "SAR";
 
 /** A single stored item — one URL + one manually entered price. */
 export interface TrackedItem {
@@ -37,7 +37,7 @@ export interface TrackedItem {
   /**
    * US sales tax rate ADDED on top of the sticker price at checkout.
    * Stored as a fraction (e.g. 0.0725 for 7.25% California). US only;
-   * undefined for EU/HK/JP items. Defaults to 0 if the user didn't
+   * undefined for EU/HK/JP/SA items. Defaults to 0 if the user didn't
    * specify.
    */
   salesTaxRate?: number;
@@ -113,6 +113,7 @@ export interface ItemPrice {
    *   - US: rawEur * (1 + salesTaxRate)
    *   - JP: rawEur * (1 - jpTaxFreeRate)
    *   - HK: rawEur (no VAT, no sales tax — sticker IS the net)
+   *   - SA: rawEur (VAT included, no tourist refund modeled)
    * NaN if `rawEur` is NaN.
    */
   netEur: number;
@@ -130,6 +131,10 @@ export interface ItemPrice {
    * Original HKD sticker for HK items. Undefined for non-HKD items.
    */
   rawHkd?: number;
+  /**
+   * Original SAR sticker for SA items. Undefined for non-SAR items.
+   */
+  rawSar?: number;
   /**
    * Signed difference between this row's `netEur` and the cheapest
    * US row's `netEur` in the same card, in EUR. Negative = this row
@@ -181,6 +186,8 @@ export interface FxResponse {
   hkdRate: number;
   /** JPY → EUR conversion rate. */
   jpyRate: number;
+  /** SAR → EUR conversion rate. */
+  sarRate: number;
   source: "cache" | "live" | "stale" | "fallback";
   fetchedAt: string;
 }

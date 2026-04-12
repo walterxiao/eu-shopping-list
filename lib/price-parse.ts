@@ -81,12 +81,12 @@ export function parsePrice(input: string): number | null {
  */
 export function formatPricePreview(
   n: number,
-  currency: "EUR" | "USD" | "HKD" | "JPY",
+  currency: "EUR" | "USD" | "HKD" | "JPY" | "SAR",
 ): string {
   return new Intl.NumberFormat("en-IE", {
     style: "currency",
     currency,
-    // JPY: 0 decimals (¥1,500). EUR/USD/HKD: 2 decimals.
+    // JPY: 0 decimals (¥1,500). Everything else: 2 decimals.
     maximumFractionDigits: currency === "JPY" ? 0 : 2,
     minimumFractionDigits: currency === "JPY" ? 0 : 2,
   }).format(n);

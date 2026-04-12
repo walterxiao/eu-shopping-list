@@ -109,6 +109,8 @@ function currencyForRegion(region: Region): Currency {
       return "JPY";
     case "HK":
       return "HKD";
+    case "SA":
+      return "SAR";
     case "EU":
       return "EUR";
   }

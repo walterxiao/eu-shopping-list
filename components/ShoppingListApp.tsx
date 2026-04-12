@@ -140,6 +140,7 @@ export default function ShoppingListApp() {
               usdToEur: fx.rate,
               hkdToEur: fx.hkdRate,
               jpyToEur: fx.jpyRate,
+              sarToEur: fx.sarRate,
             }
           : null,
       ),

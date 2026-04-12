@@ -96,6 +96,13 @@ function hkd(n: number): string {
   }).format(n);
 }
 
+function sar(n: number): string {
+  return new Intl.NumberFormat("en-SA", {
+    style: "currency",
+    currency: "SAR",
+  }).format(n);
+}
+
 /** Render `priceRaw` in its native currency for display in the
  *  Sticker column. */
 function nativeMoney(n: number, currency: Currency): string {
@@ -106,6 +113,8 @@ function nativeMoney(n: number, currency: Currency): string {
       return jpy(n);
     case "HKD":
       return hkd(n);
+    case "SAR":
+      return sar(n);
     case "EUR":
       return eur(n);
   }
@@ -139,6 +148,7 @@ function regionLabel(price: ItemPrice): string {
   if (region === "US") return countryName("US");
   if (region === "JP") return countryName("JP");
   if (region === "HK") return countryName("HK");
+  if (region === "SA") return countryName("SA");
   return "EU";
 }
 
@@ -172,6 +182,7 @@ function PriceRow({
   const isEu = item.region === "EU";
   const isJp = item.region === "JP";
   const isHk = item.region === "HK";
+  const isSa = item.region === "SA";
   const [editing, setEditing] = useState(false);
   const [priceText, setPriceText] = useState(String(item.priceRaw));
   /**
@@ -280,6 +291,9 @@ function PriceRow({
     }
     if (isHk) {
       return <span className="text-neutral-400">duty-free</span>;
+    }
+    if (isSa) {
+      return <span className="text-neutral-400">VAT included</span>;
     }
     // EU row: fall back to DEFAULT_EU_REFUND_RATE for legacy rows.
     const rate = item.euRefundRate ?? DEFAULT_EU_REFUND_RATE;
@@ -569,6 +583,7 @@ function AddAnotherRegionForm({
   const isEu = region === "EU";
   const isJp = region === "JP";
   const isHk = region === "HK";
+  const isSa = region === "SA";
   const currency: Currency =
     region === "US"
       ? "USD"
@@ -576,7 +591,9 @@ function AddAnotherRegionForm({
         ? "JPY"
         : region === "HK"
           ? "HKD"
-          : "EUR";
+          : region === "SA"
+            ? "SAR"
+            : "EUR";
   const parsedPrice = useMemo(() => parsePrice(priceText), [priceText]);
 
   const parsedSalesTax = useMemo<number | null>(
@@ -712,7 +729,9 @@ function AddAnotherRegionForm({
                 ? "$1,190.00"
                 : currency === "JPY"
                   ? "¥150,000"
-                  : "HK$9,500"
+                  : currency === "SAR"
+                    ? "SAR 1,500.00"
+                    : "HK$9,500"
           }
           className="w-28 rounded border border-neutral-300 px-2 py-1 text-xs focus:border-neutral-500 focus:outline-none"
           aria-label="Price"
@@ -764,6 +783,9 @@ function AddAnotherRegionForm({
         )}
         {isHk && (
           <span className="text-[11px] text-neutral-500">duty-free</span>
+        )}
+        {isSa && (
+          <span className="text-[11px] text-neutral-500">VAT included</span>
         )}
         <button
           type="submit"
@@ -1045,9 +1067,11 @@ export default function ComparisonGrid({
         (default 6% Northern VA). <strong>JP rows</strong>: sticker
         minus the 10% consumption-tax exemption available to
         passport-holding tourists at checkout. <strong>HK rows</strong>:
-        sticker as-is — Hong Kong has no VAT or sales tax. The
-        cheapest-Net row is highlighted green and is the right
-        number to compare across regions.
+        sticker as-is — Hong Kong has no VAT or sales tax.{" "}
+        <strong>SA rows</strong>: sticker as-is — VAT is included and
+        no tourist refund is modeled. The cheapest-Net row is
+        highlighted green and is the right number to compare across
+        regions.
       </p>
     </section>
   );

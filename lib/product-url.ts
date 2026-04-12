@@ -93,20 +93,19 @@ export const DEFAULT_JP_TAX_FREE_RATE = 0.10;
 
 /**
  * 2-letter codes for regions we explicitly don't support because their
- * currency isn't EUR / USD / HKD / JPY. Mapping values are used in
- * error messages.
+ * currency isn't EUR / USD / HKD / JPY / SAR. Mapping values are used
+ * in error messages.
  */
 const NON_EUR_USD_REJECT: Record<string, string> = {
-  uk: "UK (GBP) is not supported — only Eurozone, US, HK, and JP sites are.",
-  gb: "UK (GBP) is not supported — only Eurozone, US, HK, and JP sites are.",
-  ch: "Switzerland (CHF) is not supported — only Eurozone, US, HK, and JP sites are.",
-  kr: "Korea (KRW) is not supported — only Eurozone, US, HK, and JP sites are.",
-  cn: "China (CNY) is not supported — only Eurozone, US, HK, and JP sites are.",
-  sg: "Singapore (SGD) is not supported — only Eurozone, US, HK, and JP sites are.",
-  ca: "Canada (CAD) is not supported — only Eurozone, US, HK, and JP sites are.",
-  au: "Australia (AUD) is not supported — only Eurozone, US, HK, and JP sites are.",
-  ae: "UAE (AED) is not supported — only Eurozone, US, HK, and JP sites are.",
-  sa: "Saudi Arabia (SAR) is not supported — only Eurozone, US, HK, and JP sites are.",
+  uk: "UK (GBP) is not supported — only Eurozone, US, HK, JP, and SA sites are.",
+  gb: "UK (GBP) is not supported — only Eurozone, US, HK, JP, and SA sites are.",
+  ch: "Switzerland (CHF) is not supported — only Eurozone, US, HK, JP, and SA sites are.",
+  kr: "Korea (KRW) is not supported — only Eurozone, US, HK, JP, and SA sites are.",
+  cn: "China (CNY) is not supported — only Eurozone, US, HK, JP, and SA sites are.",
+  sg: "Singapore (SGD) is not supported — only Eurozone, US, HK, JP, and SA sites are.",
+  ca: "Canada (CAD) is not supported — only Eurozone, US, HK, JP, and SA sites are.",
+  au: "Australia (AUD) is not supported — only Eurozone, US, HK, JP, and SA sites are.",
+  ae: "UAE (AED) is not supported — only Eurozone, US, HK, JP, and SA sites are.",
 };
 
 /**
@@ -117,6 +116,7 @@ const NON_EUR_USD_REJECT: Record<string, string> = {
  *   - `us`, `us-en`, `en-us` → US
  *   - `jp`, `jp-ja`, `ja-jp`, `en-jp` → JP (with default 10% tax-free)
  *   - `hk`, `hk-en`, `en-hk`, `zh-hk`, `hk-zh` → HK (no tax adjustment)
+ *   - `sa`, `sa-en`, `en-sa`, `ar-sa`, `sa-ar` → SA (no tax adjustment)
  *   - `it`, `de`, `fr`, … → EU with the country's refund rate
  *   - `it-it`, `en-it`, `de-de`, `en-de`, … → EU with the country's rate
  *   - `uk`, `gb`, `en-gb`, `ch`, `kr`, … → reject (returns error string)
@@ -140,6 +140,7 @@ function detectRegion(rawSegment: string): SegmentResult {
     return { region: "JP", country: "jp", jpTaxFreeRate: DEFAULT_JP_TAX_FREE_RATE };
   }
   if (s === "hk") return { region: "HK", country: "hk" };
+  if (s === "sa") return { region: "SA", country: "sa" };
   if (EUROZONE_REFUND_RATE[s] !== undefined) {
     return {
       region: "EU",
@@ -173,6 +174,7 @@ function detectRegion(rawSegment: string): SegmentResult {
         };
       }
       if (part === "hk") return { region: "HK", country: "hk" };
+      if (part === "sa") return { region: "SA", country: "sa" };
       if (EUROZONE_REFUND_RATE[part] !== undefined) {
         return {
           region: "EU",

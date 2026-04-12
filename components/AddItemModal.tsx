@@ -77,6 +77,8 @@ function regionToCurrency(region: Region): Currency {
       return "JPY";
     case "HK":
       return "HKD";
+    case "SA":
+      return "SAR";
     case "EU":
       return "EUR";
   }
@@ -156,7 +158,7 @@ export default function AddItemModal({ open, onClose, items, onAdd }: Props) {
    */
   async function handleFetchPrice() {
     if (parseResult.kind !== "ok") return;
-    if (isJp || isHk) {
+    if (isJp || isHk || isSa) {
       setFetchError(
         "Auto-fetch only supports EUR/USD pages — paste the price manually",
       );
@@ -195,6 +197,7 @@ export default function AddItemModal({ open, onClose, items, onAdd }: Props) {
   const isEu = parseResult.kind === "ok" && parseResult.region === "EU";
   const isJp = parseResult.kind === "ok" && parseResult.region === "JP";
   const isHk = parseResult.kind === "ok" && parseResult.region === "HK";
+  const isSa = parseResult.kind === "ok" && parseResult.region === "SA";
   const currency: Currency =
     parseResult.kind === "ok" ? regionToCurrency(parseResult.region) : "EUR";
   const parsedPrice = useMemo(() => parsePrice(priceText), [priceText]);
@@ -413,18 +416,20 @@ export default function AddItemModal({ open, onClose, items, onAdd }: Props) {
                     ? "Sticker (JPY, tax-included)"
                     : isHk
                       ? "Sticker (HKD)"
-                      : `Price (${currency})`}
+                      : isSa
+                        ? "Sticker (SAR)"
+                        : `Price (${currency})`}
               </label>
               <button
                 type="button"
                 onClick={handleFetchPrice}
                 disabled={
-                  parseResult.kind !== "ok" || fetching || isJp || isHk
+                  parseResult.kind !== "ok" || fetching || isJp || isHk || isSa
                 }
                 title={
                   parseResult.kind !== "ok"
                     ? "Paste a valid product URL first"
-                    : isJp || isHk
+                    : isJp || isHk || isSa
                       ? "Auto-fetch supports EUR/USD only — paste manually"
                       : "Fetch the price from the retailer page"
                 }
@@ -445,7 +450,9 @@ export default function AddItemModal({ open, onClose, items, onAdd }: Props) {
                     ? "$1,190.00"
                     : currency === "JPY"
                       ? "¥150,000"
-                      : "HK$9,500"
+                      : currency === "SAR"
+                        ? "SAR 1,500.00"
+                        : "HK$9,500"
               }
               className="w-full rounded border border-neutral-300 px-3 py-2 text-sm focus:border-neutral-500 focus:outline-none"
               aria-label="Price"
@@ -584,6 +591,13 @@ export default function AddItemModal({ open, onClose, items, onAdd }: Props) {
           {isHk && (
             <p className="text-xs text-neutral-500">
               Hong Kong has no VAT or sales tax — sticker IS the net price.
+            </p>
+          )}
+
+          {isSa && (
+            <p className="text-xs text-neutral-500">
+              Saudi Arabia — no tourist refund modeled. VAT is included in
+              the sticker price.
             </p>
           )}
 
