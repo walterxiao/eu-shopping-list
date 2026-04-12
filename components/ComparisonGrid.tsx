@@ -135,10 +135,10 @@ function countryName(code: string): string {
 
 function regionLabel(price: ItemPrice): string {
   const { region, sourceCountry } = price.item;
+  if (sourceCountry) return countryName(sourceCountry);
   if (region === "US") return countryName("US");
   if (region === "JP") return countryName("JP");
   if (region === "HK") return countryName("HK");
-  if (sourceCountry) return `EU · ${countryName(sourceCountry)}`;
   return "EU";
 }
 
