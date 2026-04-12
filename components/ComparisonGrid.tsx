@@ -940,6 +940,21 @@ export default function ComparisonGrid({
     [items],
   );
 
+  // Group cards by host (brand) so the UI renders brand sections
+  // with a header like "rimowa.com" above each cluster. Within each
+  // brand, cards keep their existing order (newest-touched first,
+  // set by compute.ts).
+  const brandGroups = useMemo(() => {
+    const groups = new Map<string, ComparisonItem[]>();
+    for (const card of items) {
+      const brand = card.host;
+      const existing = groups.get(brand);
+      if (existing) existing.push(card);
+      else groups.set(brand, [card]);
+    }
+    return Array.from(groups.entries());
+  }, [items]);
+
   if (loading) {
     return (
       <section className="space-y-3">
@@ -980,16 +995,25 @@ export default function ComparisonGrid({
           </p>
         </div>
       ) : (
-        <div className="space-y-3">
-          {items.map((card) => (
-            <Card
-              key={`${card.host}-${card.productName}`}
-              card={card}
-              allItems={flatItems}
-              onAdd={onAdd}
-              onUpdate={onUpdate}
-              onRemove={onRemove}
-            />
+        <div className="space-y-6">
+          {brandGroups.map(([host, cards]) => (
+            <div key={host}>
+              <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500">
+                {shortHost(host)}
+              </h2>
+              <div className="space-y-3">
+                {cards.map((card) => (
+                  <Card
+                    key={`${card.host}-${card.productName}`}
+                    card={card}
+                    allItems={flatItems}
+                    onAdd={onAdd}
+                    onUpdate={onUpdate}
+                    onRemove={onRemove}
+                  />
+                ))}
+              </div>
+            </div>
           ))}
         </div>
       )}
