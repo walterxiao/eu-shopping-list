@@ -791,7 +791,11 @@ function Card({
   onUpdate: Props["onUpdate"];
   onRemove: Props["onRemove"];
 }) {
-  const [collapsed, setCollapsed] = useState(false);
+  // Default to collapsed so the list is compact on load. Users
+  // click "Expand" on individual cards they want to drill into.
+  // Single-row cards behave identically either way — the toggle
+  // only renders when there's more than one row to hide.
+  const [collapsed, setCollapsed] = useState(true);
 
   const cheapestNet = card.prices.find(
     (p) => p.item.id === card.cheapestNetItemId,
