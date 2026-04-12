@@ -115,12 +115,30 @@ function shortHost(host: string): string {
   return host.replace(/^www\./, "");
 }
 
+/** Resolve a 2-letter country/region code to its full English name
+ *  using the built-in Intl API. "US" → "United States",
+ *  "IT" → "Italy", "HK" → "Hong Kong SAR China" (trimmed to
+ *  "Hong Kong" below), etc. */
+const countryDisplayName = new Intl.DisplayNames(["en"], { type: "region" });
+
+function countryName(code: string): string {
+  try {
+    const name = countryDisplayName.of(code.toUpperCase());
+    if (!name) return code.toUpperCase();
+    // Intl returns "Hong Kong SAR China" — trim to "Hong Kong".
+    // Same for "Macao SAR China" → "Macao", though we don't use it.
+    return name.replace(/ SAR China$/, "");
+  } catch {
+    return code.toUpperCase();
+  }
+}
+
 function regionLabel(price: ItemPrice): string {
   const { region, sourceCountry } = price.item;
-  if (region === "US") return "US";
-  if (region === "JP") return "JP";
-  if (region === "HK") return "HK";
-  if (sourceCountry) return `EU · ${sourceCountry.toUpperCase()}`;
+  if (region === "US") return countryName("US");
+  if (region === "JP") return countryName("JP");
+  if (region === "HK") return countryName("HK");
+  if (sourceCountry) return `EU · ${countryName(sourceCountry)}`;
   return "EU";
 }
 
